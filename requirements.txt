@@ -3,3 +3,4 @@ openai
 yt-dlp
 aiohttp
 davey
+static-ffmpeg
