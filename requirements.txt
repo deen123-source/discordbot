@@ -2,5 +2,4 @@ discord.py[voice]
 openai
 yt-dlp
 aiohttp
-imageio-ffmpeg
 davey
