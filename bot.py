@@ -40,7 +40,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
-# ปรับแก้มาใช้ scsearch (SoundCloud) เพื่อเลี่ยงการติดล็อก IP Bot บน YouTube
+# ตั้งค่า yt-dlp และ FFmpeg ปรับปรุงเพื่อให้สัญญาณเสียงส่งผ่าน Discord ได้สมบูรณ์
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
@@ -51,7 +51,7 @@ YTDL_OPTIONS = {
 
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
+    'options': '-vn -loglevel panic'
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
@@ -88,13 +88,22 @@ class MusicPlayer:
                 except TimeoutError:
                     return self.destroy(self.guild)
 
-            source = discord.FFmpegPCMAudio(self.current['url'], executable=FFMPEG_PATH, **FFMPEG_OPTIONS)
-            self.guild.voice_client.play(source, after=lambda _: self.bot.loop.call_soon_threadsafe(self.next.set))
+            # ใช้ FFmpegPCMAudio พร้อมส่งตัวแปรแก้ปัญหาเสียงเงียบ
+            source = discord.FFmpegPCMAudio(
+                self.current['url'],
+                executable=FFMPEG_PATH,
+                **FFMPEG_OPTIONS
+            )
+            
+            # ปรับเพิ่ม PCM volume transformer ให้มั่นใจว่าสัญญาณระดับเสียงถูกเร่งออก
+            audio_source = discord.PCMVolumeTransformer(source, volume=0.5)
+
+            self.guild.voice_client.play(audio_source, after=lambda e: self.bot.loop.call_soon_threadsafe(self.next.set))
 
             await self.update_panel()
             await self.next.wait()
 
-            source.cleanup()
+            audio_source.cleanup()
 
     async def update_panel(self):
         embed = discord.Embed(title="🎶 Music Control Panel", color=discord.Color.blue())
