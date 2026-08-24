@@ -40,7 +40,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
-# ตั้งค่า yt-dlp และ FFmpeg ปรับปรุงเพื่อให้สัญญาณเสียงส่งผ่าน Discord ได้สมบูรณ์
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
@@ -49,9 +48,10 @@ YTDL_OPTIONS = {
     'source_address': '0.0.0.0'
 }
 
+# ปรับแก้ Parameter FFMPEG เพื่อป้องกัน Crash (return code -11)
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn -loglevel panic'
+    'options': '-vn -filter:a "volume=0.5"'
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
@@ -88,22 +88,19 @@ class MusicPlayer:
                 except TimeoutError:
                     return self.destroy(self.guild)
 
-            # ใช้ FFmpegPCMAudio พร้อมส่งตัวแปรแก้ปัญหาเสียงเงียบ
+            # ใช้ FFmpegPCMAudio แบบเสถียร
             source = discord.FFmpegPCMAudio(
                 self.current['url'],
                 executable=FFMPEG_PATH,
                 **FFMPEG_OPTIONS
             )
-            
-            # ปรับเพิ่ม PCM volume transformer ให้มั่นใจว่าสัญญาณระดับเสียงถูกเร่งออก
-            audio_source = discord.PCMVolumeTransformer(source, volume=0.5)
 
-            self.guild.voice_client.play(audio_source, after=lambda e: self.bot.loop.call_soon_threadsafe(self.next.set))
+            self.guild.voice_client.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(self.next.set))
 
             await self.update_panel()
             await self.next.wait()
 
-            audio_source.cleanup()
+            source.cleanup()
 
     async def update_panel(self):
         embed = discord.Embed(title="🎶 Music Control Panel", color=discord.Color.blue())
