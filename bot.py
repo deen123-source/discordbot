@@ -49,7 +49,6 @@ YTDL_OPTIONS = {
     'source_address': '0.0.0.0'
 }
 
-# ปรับ FFMPEG OPTIONS ให้คลีน ไม่ซ้ำซ้อน เพื่อไม่ให้คำสั่งชนกันเอง
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
@@ -103,6 +102,9 @@ class MusicPlayer:
             source.cleanup()
 
     async def update_panel(self):
+        if not self.current:
+            return
+
         embed = discord.Embed(title="🎶 Music Control Panel", color=discord.Color.blue())
         embed.add_field(name="เพลงที่กำลังเล่น", value=f"**{self.current['title']}**", inline=False)
         embed.add_field(name="สถานะ Loop", value="🔄 เปิดอยู่" if self.is_looping else "❌ ปิดอยู่", inline=True)
@@ -194,6 +196,10 @@ async def play(ctx, *, search: str):
             player = get_player(ctx)
             await player.queue.put({'url': video['url'], 'title': video['title']})
             await ctx.send(f"เพิ่มเพลง **{video['title']}** เข้าคิวเรียบร้อยครับ!")
+
+            # อัปเดตการแสดงผลคิวบน Control Panel ทันทีที่มีการสั่ง play เพิ่ม
+            await player.update_panel()
+
         except Exception as e:
             await ctx.send(f"เกิดข้อผิดพลาดในการดึงเพลง: {e}")
 
