@@ -40,11 +40,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
+# ปรับแก้มาใช้ scsearch (SoundCloud) เพื่อเลี่ยงการติดล็อก IP Bot บน YouTube
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
     'quiet': True,
-    'default_search': 'auto',
+    'default_search': 'scsearch',
     'source_address': '0.0.0.0'
 }
 
@@ -181,7 +182,7 @@ async def play(ctx, *, search: str):
 
     async with ctx.typing():
         try:
-            info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(f"ytsearch:{search}", download=False))
+            info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
             video = info['entries'][0] if 'entries' in info and len(info['entries']) > 0 else info
 
             player = get_player(ctx)
@@ -211,10 +212,8 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # ข้ามข้อความที่ขึ้นต้นด้วย ! เพื่อไม่ให้ AI แย่งตอบคำสั่งบอท
     clean_content = message.content.strip()
     if clean_content.startswith("!") or clean_content.startswith("<@"):
-        # ตัดการแท็กออกก่อนเช็กคำสั่ง
         content_without_mention = message.content.replace(f"<@{bot.user.id}>", "").strip()
         if content_without_mention.startswith("!"):
             ctx = await bot.get_context(message)
