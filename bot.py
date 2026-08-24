@@ -49,10 +49,10 @@ YTDL_OPTIONS = {
     'source_address': '0.0.0.0'
 }
 
-# ปรับแก้ Parameter FFMPEG เพื่อเพิ่มคุณภาพเสียงและ Buffer ป้องกันกระตุก/หลุดเอง
+# ปรับ FFMPEG OPTIONS ให้คลีน ไม่ซ้ำซ้อน เพื่อไม่ให้คำสั่งชนกันเอง
 FFMPEG_OPTIONS = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -probesize 10M -analyzeduration 10M',
-    'options': '-vn -ar 48000 -ac 2 -b:a 192k'
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn'
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
