@@ -3,8 +3,8 @@ import discord
 from discord.ext import commands
 from openai import OpenAI
 
-OPENROUTER_API_KEY = "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"
-DISCORD_BOT_TOKEN = "MTU0MTQ1Mzg5NzE2NjYxODgwNg.GRqDSv.SLWPHLCNOFPUVFQnFiqj7DyGdu3VFlCC-SFWWk"
+OPENROUTER_API_KEY = "AI api"
+DISCORD_BOT_TOKEN = "Dis api"
 MODEL_NAME = "stealth/ox-alpha"
 
 ai_client = OpenAI(
