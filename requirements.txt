@@ -1,4 +1,4 @@
 discord.py
 openai
 yt-dlp
-davey
+aiohttp
