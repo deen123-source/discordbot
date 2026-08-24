@@ -5,6 +5,7 @@ from discord.ext import commands
 from openai import OpenAI
 import yt_dlp
 from aiohttp import web
+import imageio_ffmpeg
 
 # ==========================================
 # 0. ระบบหลอก Render ให้รัน Web Service ได้ (Keep Alive Port)
@@ -36,6 +37,8 @@ ai_client = OpenAI(
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
@@ -84,7 +87,7 @@ class MusicPlayer:
                 except TimeoutError:
                     return self.destroy(self.guild)
 
-            source = discord.FFmpegPCMAudio(self.current['url'], **FFMPEG_OPTIONS)
+            source = discord.FFmpegPCMAudio(self.current['url'], executable=FFMPEG_PATH, **FFMPEG_OPTIONS)
             self.guild.voice_client.play(source, after=lambda _: self.bot.loop.call_soon_threadsafe(self.next.set))
 
             await self.update_panel()
@@ -201,18 +204,24 @@ async def on_ready():
     await start_dummy_web_server()
 
 # ==========================================
-# 4. ระบบตอบแชทด้วย AI
+# 4. ระบบตอบแชทด้วย AI (ข้ามคำสั่งที่ขึ้นต้นด้วย !)
 # ==========================================
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
 
-    if message.content.startswith("!"):
-        await bot.process_commands(message)
-        return
-
+    # ข้ามข้อความที่ขึ้นต้นด้วย ! เพื่อไม่ให้ AI แย่งตอบคำสั่งบอท
     clean_content = message.content.strip()
+    if clean_content.startswith("!") or clean_content.startswith("<@"):
+        # ตัดการแท็กออกก่อนเช็กคำสั่ง
+        content_without_mention = message.content.replace(f"<@{bot.user.id}>", "").strip()
+        if content_without_mention.startswith("!"):
+            ctx = await bot.get_context(message)
+            ctx.message.content = content_without_mention
+            await bot.invoke(ctx)
+            return
+
     if not clean_content:
         return
 
