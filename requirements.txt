@@ -2,3 +2,5 @@ discord.py
 openai
 yt-dlp
 aiohttp
+imageio-ffmpeg
+PyNaCl
