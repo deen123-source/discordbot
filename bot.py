@@ -7,7 +7,7 @@ import yt_dlp
 from aiohttp import web
 import static_ffmpeg
 
-# โหลด FFmpeg ไบนารีสำหรับ Linux อัตโนมัติ (แก้ปัญหา Segmentation fault / code -11)
+# โหลด FFmpeg ไบนารีสำหรับ Linux อัตโนมัติ
 static_ffmpeg.add_paths()
 
 # ==========================================
@@ -49,9 +49,10 @@ YTDL_OPTIONS = {
     'source_address': '0.0.0.0'
 }
 
+# ปรับแก้ Parameter FFMPEG เพื่อเพิ่มคุณภาพเสียงและ Buffer ป้องกันกระตุก/หลุดเอง
 FFMPEG_OPTIONS = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -probesize 10M -analyzeduration 10M',
+    'options': '-vn -ar 48000 -ac 2 -b:a 192k'
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
