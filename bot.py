@@ -5,7 +5,6 @@ from discord.ext import commands
 from openai import OpenAI
 import yt_dlp
 from aiohttp import web
-import imageio_ffmpeg
 
 # ==========================================
 # 0. ระบบหลอก Render ให้รัน Web Service ได้ (Keep Alive Port)
@@ -38,8 +37,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
-
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
@@ -48,10 +45,10 @@ YTDL_OPTIONS = {
     'source_address': '0.0.0.0'
 }
 
-# ปรับแก้ Parameter FFMPEG เพื่อป้องกัน Crash (return code -11)
+# ปรับใช้ FFmpeg สตรีมตรง ไม่ซับซ้อนเพื่อไม่ให้ process หลุด
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn -filter:a "volume=0.5"'
+    'options': '-vn'
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
@@ -88,10 +85,10 @@ class MusicPlayer:
                 except TimeoutError:
                     return self.destroy(self.guild)
 
-            # ใช้ FFmpegPCMAudio แบบเสถียร
+            # เรียกใช้ ffmpeg ของระบบปฏิบัติการโดยตรง
             source = discord.FFmpegPCMAudio(
                 self.current['url'],
-                executable=FFMPEG_PATH,
+                executable='ffmpeg',
                 **FFMPEG_OPTIONS
             )
 
