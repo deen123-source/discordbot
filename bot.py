@@ -4,12 +4,28 @@ import discord
 from discord.ext import commands
 from openai import OpenAI
 import yt_dlp
+from aiohttp import web
 
 # ==========================================
-# 1. ตั้งค่า Key โดยดึงจาก Environment Variables ของ Render
+# 0. ระบบหลอก Render ให้รัน Web Service ได้ (Keep Alive Port)
 # ==========================================
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "ใส่_OPENROUTER_API_KEY_สำรองที่นี่")
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_สำรองที่นี่")
+async def handle_health_check(request):
+    return web.Response(text="Bot is running!")
+
+async def start_dummy_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+# ==========================================
+# 1. ตั้งค่า Key และ Client
+# ==========================================
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "ใส่_OPENROUTER_API_KEY_ของคุณที่นี่")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_ของคุณที่นี่")
 MODEL_NAME = "stealth/ox-alpha"
 
 ai_client = OpenAI(
@@ -39,7 +55,6 @@ ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 # ==========================================
 # 2. ระบบคิวเพลง และ Control Panel (UI Buttons)
 # ==========================================
-
 class MusicPlayer:
     def __init__(self, ctx):
         self.bot = ctx.bot
@@ -152,7 +167,6 @@ def get_player(ctx):
 # ==========================================
 # 3. คำสั่งเปิดเพลง และจัดการคิว
 # ==========================================
-
 @bot.command(name="play", help="สั่งเปิดเพลงหรือเพิ่มเข้าคิว")
 async def play(ctx, *, search: str):
     if not ctx.author.voice:
@@ -184,11 +198,11 @@ async def stop(ctx):
 @bot.event
 async def on_ready():
     print(f"ล็อกอินเรียบร้อย! บอท {bot.user.name} พร้อมใช้งานแล้ว!")
+    await start_dummy_web_server()
 
 # ==========================================
 # 4. ระบบตอบแชทด้วย AI
 # ==========================================
-
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
