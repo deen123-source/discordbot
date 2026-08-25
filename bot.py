@@ -52,7 +52,7 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         # Sync Slash Commands เข้า Guild เพื่อให้คำสั่งขึ้นใช้ได้ทันทีไม่ต้องรอ 1 ชม.
         self.tree.copy_global_to(guild=MY_GUILD)
-        await self.tree.sync(guild=MY_GUILD)
+        await self.tree.sync()
         print("Sync Slash Commands เข้า Guild เรียบร้อยแล้ว!")
 
 bot = MyBot()
