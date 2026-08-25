@@ -32,6 +32,11 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "ใส่_OPENROUTER_API_K
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_ของคุณที่นี่")
 MODEL_NAME = "stealth/ox-alpha"
 
+# ใส่ Guild ID ของเซิร์ฟเวอร์ดีนตรงนี้ (เปลี่ยนตัวเลขเป็น ID เซิร์ฟเวอร์จริงของคุณ)
+# วิธีเอา ID: เปิด Developer Mode ใน Discord > คลิกขวาชื่อเซิร์ฟเวอร์ > Copy Server ID
+GUILD_ID = 123456789012345678 
+MY_GUILD = discord.Object(id=GUILD_ID)
+
 ai_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
@@ -45,8 +50,10 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        await self.tree.sync()
-        print("Sync Slash Commands เรียบร้อยแล้ว!")
+        # Sync Slash Commands เข้า Guild เพื่อให้คำสั่งขึ้นใช้ได้ทันทีไม่ต้องรอ 1 ชม.
+        self.tree.copy_global_to(guild=MY_GUILD)
+        await self.tree.sync(guild=MY_GUILD)
+        print("Sync Slash Commands เข้า Guild เรียบร้อยแล้ว!")
 
 bot = MyBot()
 
@@ -82,7 +89,7 @@ FFMPEG_OPTIONS = {
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
 # ==========================================
-# 3. ระบบคิวเพลง และ Control Panel (แก้บัคส่งซ้ำ)
+# 3. ระบบคิวเพลง และ Control Panel (แก้บัคส่งซ้ำ 2 รอบ)
 # ==========================================
 class MusicPlayer:
     def __init__(self, interaction):
@@ -147,7 +154,6 @@ class MusicPlayer:
             else:
                 self.panel_message = await self.channel.send(embed=embed, view=view)
         finally:
-            self.update_lock = False
             self._updating = False
 
     def destroy(self, guild):
@@ -244,7 +250,7 @@ class VerifyView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
 # ==========================================
-# 5. Slash Commands (คำสั่งระดับหลัก)
+# 5. Slash Commands (สั่งงานผ่าน / )
 # ==========================================
 @bot.tree.command(name="play", description="เปิดเพลงหรือเพิ่มเข้าคิว")
 @app_commands.describe(search="ชื่อเพลง หรือ Link จาก YouTube / SoundCloud")
@@ -272,7 +278,7 @@ async def slash_play(interaction: discord.Interaction, search: str):
     except Exception as e:
         await interaction.followup.send(f"เกิดข้อผิดพลาดในการดึงเพลง: {e}")
 
-@bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้ออกจากห้องเสียง")
+@bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้อออกจากห้องเสียง")
 async def slash_stop(interaction: discord.Interaction):
     if interaction.guild.id in players:
         del players[interaction.guild.id]
@@ -303,9 +309,9 @@ async def slash_set_ai_channel(interaction: discord.Interaction, channel: discor
 @app_commands.describe(
     welcome_channel="ห้องสำหรับแจ้งคนเข้า",
     goodbye_channel="ห้องสำหรับแจ้งคนออก",
-    welcome_msg="ข้อความต้อนรับ (ใช้ {member} แทนชื่อคนเข้า)",
+    welcome_msg="ข้อความต้อนรับ (ใช้ {member} แทนการแท็กชื่อคนเข้า)",
     goodbye_msg="ข้อความคนออก (ใช้ {member} แทนชื่อคนออก)",
-    image_url="URL รูปภาพต้อนรับ (ใส่เป็น Link รูป)"
+    image_url="URL รูปภาพวอลเปเปอร์หลัก (ถ้าไม่ใส่จะใช้รูปโปรไฟล์สมาชิก)"
 )
 async def slash_setup_welcome(
     interaction: discord.Interaction,
@@ -363,10 +369,23 @@ async def on_member_join(member):
         channel = member.guild.get_channel(ch_id)
         if channel:
             text = config["welcome_message"].format(member=member.mention)
-            embed = discord.Embed(title="👋 ต้อนรับสมาชิกใหม่!", description=text, color=discord.Color.green())
+            embed = discord.Embed(
+                title="👋 ยินดีต้อนรับสมาชิกใหม่!", 
+                description=text, 
+                color=discord.Color.green()
+            )
+            
+            # ดึงรูปโปรไฟล์ (Avatar) ของคนที่เข้ามาใหม่มาแปะใน Embed
+            avatar_url = member.display_avatar.url
+            embed.set_thumbnail(url=avatar_url)
+            
             if config["welcome_image_url"]:
                 embed.set_image(url=config["welcome_image_url"])
-            await channel.send(embed=embed)
+            else:
+                embed.set_image(url=avatar_url)
+
+            # พิมพ์แท็กเรียกชื่อผู้ใช้ใหม่พร้อมส่ง Embed
+            await channel.send(content=f"ยินดีต้อนรับ {member.mention} !", embed=embed)
 
 @bot.event
 async def on_member_remove(member):
@@ -375,7 +394,12 @@ async def on_member_remove(member):
         channel = member.guild.get_channel(ch_id)
         if channel:
             text = config["goodbye_message"].format(member=member.display_name)
-            embed = discord.Embed(title="😢 สมาชิกออกจากเซิร์ฟเวอร์", description=text, color=discord.Color.red())
+            embed = discord.Embed(
+                title="😢 สมาชิกออกจากเซิร์ฟเวอร์", 
+                description=text, 
+                color=discord.Color.red()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
             await channel.send(embed=embed)
 
 @bot.event
