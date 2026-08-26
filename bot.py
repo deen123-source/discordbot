@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import discord
 from discord import app_commands
@@ -6,6 +7,8 @@ from discord.ext import commands
 import yt_dlp
 from aiohttp import web
 import static_ffmpeg
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 
 static_ffmpeg.add_paths()
 
@@ -13,7 +16,7 @@ static_ffmpeg.add_paths()
 # 0. Keep-Alive Web Server สำหรับ Render
 # ==========================================
 async def handle_health_check(request):
-    return web.Response(text="Bot is running!")
+    return web.Response(text="Bot is running perfectly!")
 
 async def start_dummy_web_server():
     app = web.Application()
@@ -25,9 +28,22 @@ async def start_dummy_web_server():
     await site.start()
 
 # ==========================================
-# 1. ตั้งค่า Discord Token & Bot Client
+# 1. ตั้งค่า API Tokens & Client Options
 # ==========================================
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_ของคุณที่นี่")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_ของคุณ")
+SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "ใส่_SPOTIFY_CLIENT_ID_ของคุณ")
+SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "ใส่_SPOTIFY_CLIENT_SECRET_ของคุณ")
+
+# ตั้งค่า Spotipy Client
+sp = None
+if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
+    try:
+        sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+            client_id=SPOTIFY_CLIENT_ID,
+            client_secret=SPOTIFY_CLIENT_SECRET
+        ))
+    except Exception as e:
+        print(f"Spotify API Init Error: {e}")
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -43,7 +59,7 @@ class MyBot(commands.Bot):
 bot = MyBot()
 
 # ==========================================
-# 2. ตัวแปรตั้งค่าระบบ (Global Storage)
+# 2. Global Configuration Data
 # ==========================================
 config = {
     "welcome_channel_id": None,
@@ -55,7 +71,6 @@ config = {
     "verify_desc": "ยินดีต้อนรับเข้าสู่เซิร์ฟเวอร์! กรุณากดปุ่มด้านล่างเพื่อทำการยืนยันตัวตนและรับยศครับ",
     "verify_role_id": None,
     "verify_log_channel_id": None,
-    # คำถามสำหรับฟอร์มยืนยันตัวตน (ตั้งค่าเริ่มต้นไว้ 3 ข้อ)
     "verify_questions": [
         {"label": "อยากแรกเลยนะ ชื่อเล่นชื่ออะไรหรออออ", "placeholder": "กรอกชื่อเล่นตรงนี้นะ", "required": True},
         {"label": "อายุเท่าไหร่ยยย", "placeholder": "ไม่อยากบอกก็ได้นะ :(", "required": False},
@@ -63,11 +78,14 @@ config = {
     ]
 }
 
+# ==========================================
+# 3. Audio Extraction Helper Functions
+# ==========================================
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
-    'noplaylist': True,
+    'noplaylist': False,
     'quiet': True,
-    'default_search': 'scsearch',
+    'default_search': 'ytsearch',
     'source_address': '0.0.0.0'
 }
 
@@ -78,8 +96,52 @@ FFMPEG_OPTIONS = {
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
+def extract_spotify_queries(url):
+    """แปลง Spotify Track/Playlist/Album เป็น Search Queries"""
+    queries = []
+    if not sp:
+        return queries
+    
+    try:
+        if "track" in url:
+            match = re.search(r'track/([a-zA-Z0-9]+)', url)
+            if match:
+                t = sp.track(match.group(1))
+                queries.append(f"{t['name']} {t['artists'][0]['name']}")
+        elif "playlist" in url:
+            match = re.search(r'playlist/([a-zA-Z0-9]+)', url)
+            if match:
+                res = sp.playlist_tracks(match.group(1))
+                for item in res.get('items', []):
+                    t = item.get('track')
+                    if t:
+                        queries.append(f"{t['name']} {t['artists'][0]['name']}")
+        elif "album" in url:
+            match = re.search(r'album/([a-zA-Z0-9]+)', url)
+            if match:
+                res = sp.album_tracks(match.group(1))
+                for t in res.get('items', []):
+                    queries.append(f"{t['name']} {t['artists'][0]['name']}")
+    except Exception as e:
+        print(f"Error fetching Spotify data: {e}")
+        
+    return queries
+
+def fetch_audio_info(query):
+    """ค้นหาและดึง Stream URL ผ่าน yt-dlp"""
+    try:
+        info = ytdl.extract_info(query, download=False)
+        if 'entries' in info and len(info['entries']) > 0:
+            video = info['entries'][0]
+        else:
+            video = info
+        return {'url': video['url'], 'title': video.get('title', 'Unknown Track')}
+    except Exception as e:
+        print(f"yt-dlp error for query '{query}': {e}")
+        return None
+
 # ==========================================
-# 3. ระบบเล่นเพลง และ Control Panel
+# 4. Music Player & Controller
 # ==========================================
 class MusicPlayer:
     def __init__(self, interaction):
@@ -129,8 +191,8 @@ class MusicPlayer:
         
         self._updating = True
         try:
-            embed = discord.Embed(title="🎶 Music Control Panel", color=discord.Color.blue())
-            embed.add_field(name="เพลงที่กำลังเล่น", value=f"**{self.current['title']}**", inline=False)
+            embed = discord.Embed(title="🎶 Music Control Panel", color=discord.Color.purple())
+            embed.add_field(name="กำลังเล่นอยู่", value=f"**{self.current['title']}**", inline=False)
             embed.add_field(name="สถานะ Loop", value="🔄 เปิดอยู่" if self.is_looping else "❌ ปิดอยู่", inline=True)
             embed.add_field(name="คิวที่เหลือ", value=f"{self.queue.qsize()} เพลง", inline=True)
             
@@ -159,12 +221,12 @@ class MusicControlView(discord.ui.View):
         vc = interaction.guild.voice_client
         if vc and vc.is_playing():
             vc.pause()
-            await interaction.response.send_message("หยุดเพลงชั่วคราวแล้ว!", ephemeral=True)
+            await interaction.response.send_message("หยุดเล่นชั่วคราวแล้ว!", ephemeral=True)
         elif vc and vc.is_paused():
             vc.resume()
-            await interaction.response.send_message("เล่นเพลงต่อ!", ephemeral=True)
+            await interaction.response.send_message("เล่นเพลงต่อแล้ว!", ephemeral=True)
         else:
-            await interaction.response.send_message("ไม่มีเพลงที่เล่นอยู่", ephemeral=True)
+            await interaction.response.send_message("ไม่มีเพลงที่กำลังเล่นอยู่", ephemeral=True)
 
     @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary, emoji="⏭️")
     async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -191,7 +253,7 @@ class MusicControlView(discord.ui.View):
             self.player.is_looping = False
             vc.stop()
             await vc.disconnect()
-            await interaction.response.send_message("หยุดเพลงและออกจากห้องเรียบร้อย!", ephemeral=True)
+            await interaction.response.send_message("หยุดเล่นเพลงและออกจากห้องแล้ว!", ephemeral=True)
 
 players = {}
 
@@ -204,13 +266,12 @@ def get_player(interaction):
     return player
 
 # ==========================================
-# 4. ระบบยืนยันตัวตนแบบ Dynamic Modal
+# 5. Dynamic Verification Modal & View
 # ==========================================
 class DynamicVerifyModal(discord.ui.Modal, title="ยืนยันตัวตน"):
     def __init__(self):
         super().__init__()
         self.inputs = []
-        # ดึงคำถามจาก config มาสร้าง TextInput แบบ Dynamic (สูงสุด 5 คำถาม)
         for q in config["verify_questions"]:
             text_input = discord.ui.TextInput(
                 label=q["label"][:45],
@@ -222,14 +283,12 @@ class DynamicVerifyModal(discord.ui.Modal, title="ยืนยันตัวต
             self.add_item(text_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 1. แจกยศ
         role_id = config["verify_role_id"]
         if role_id:
             role = interaction.guild.get_role(role_id)
             if role:
                 await interaction.user.add_roles(role)
 
-        # 2. ส่งข้อมูลไปห้อง Log
         log_ch_id = config["verify_log_channel_id"]
         if log_ch_id:
             log_channel = interaction.guild.get_channel(log_ch_id)
@@ -261,7 +320,7 @@ class VerifyView(discord.ui.View):
         await interaction.response.send_modal(DynamicVerifyModal())
 
 # ==========================================
-# 5. CONTROL PANEL & Modals สำหรับปรับแต่ง
+# 6. Master Control Panel (บอร์ดตั้งค่าระบบ)
 # ==========================================
 class EditVerifyQuestionsModal(discord.ui.Modal, title="ตั้งค่าคำถามยืนยันตัวตน (สูงสุด 5 ข้อ)"):
     q1 = discord.ui.TextInput(label="คำถามข้อที่ 1", default=config["verify_questions"][0]["label"] if len(config["verify_questions"]) > 0 else "", required=True)
@@ -296,7 +355,7 @@ class EditVerifyEmbedModal(discord.ui.Modal, title="แต่งข้อคว�
     async def on_submit(self, interaction: discord.Interaction):
         config["verify_title"] = self.title_input.value
         config["verify_desc"] = self.desc_input.value
-        await interaction.response.send_message("อัปเดตข้อความ Embed ยืนยันตัวตนสำเร็จ!", ephemeral=True)
+        await interaction.response.send_message("อัปเดตข้อความ Embed สำเร็จ!", ephemeral=True)
 
 class EditWelcomeModal(discord.ui.Modal, title="ตั้งค่าข้อความ คนเข้า/ออก"):
     welcome_msg = discord.ui.TextInput(label="ข้อความคนเข้า (ใช้ {member} แทนชื่อ)", default=config["welcome_message"], style=discord.TextStyle.paragraph)
@@ -307,7 +366,7 @@ class EditWelcomeModal(discord.ui.Modal, title="ตั้งค่าข้อ�
         config["welcome_message"] = self.welcome_msg.value
         config["goodbye_message"] = self.goodbye_msg.value
         config["welcome_image_url"] = self.img_url.value
-        await interaction.response.send_message("อัปเดตข้อความการแจ้งเตือนคนเข้า-ออกเรียบร้อย!", ephemeral=True)
+        await interaction.response.send_message("อัปเดตข้อความแจ้งเตือนสำเร็จ!", ephemeral=True)
 
 class MasterControlPanel(discord.ui.View):
     def __init__(self):
@@ -375,19 +434,19 @@ class MasterControlPanel(discord.ui.View):
         await interaction.response.send_message("ส่งปุ่มยืนยันตัวตนเรียบร้อยแล้ว!", ephemeral=True)
 
 # ==========================================
-# 6. Slash Commands
+# 7. Slash Commands (คำสั่งบอท)
 # ==========================================
 @bot.tree.command(name="setup_panel", description="เปิดแผงควบคุมตั้งค่าระบบบอท (Control Panel)")
 async def slash_setup_panel(interaction: discord.Interaction):
     embed = discord.Embed(
         title="⚙️ Master Control Panel - แผงควบคุมบอท",
-        description="ใช้เมนูด้านล่างเพื่อปรับแต่งคำถาม ห้อง และยศได้เลยครับ",
+        description="เลือกปรับแต่งคำถาม ยศ และห้องบริการต่าง ๆ ผ่านเมนูด้านล่างได้ทันทีครับ",
         color=discord.Color.purple()
     )
     await interaction.response.send_message(embed=embed, view=MasterControlPanel(), ephemeral=True)
 
-@bot.tree.command(name="play", description="เปิดเพลงหรือเพิ่มเข้าคิว")
-@app_commands.describe(search="ชื่อเพลง หรือ Link จาก YouTube / SoundCloud")
+@bot.tree.command(name="play", description="เปิดเพลง หรือ Playlist จาก YouTube / Spotify")
+@app_commands.describe(search="ชื่อเพลง, ลิงก์ YouTube หรือลิงก์ Spotify (Track/Playlist)")
 async def slash_play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice:
         await interaction.response.send_message("ดีนต้องเข้าห้องเสียงก่อนสั่งเปิดเพลงนะ!", ephemeral=True)
@@ -398,32 +457,67 @@ async def slash_play(interaction: discord.Interaction, search: str):
     if interaction.guild.voice_client is None:
         await interaction.user.voice.channel.connect()
 
-    try:
-        info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
-        video = info['entries'][0] if 'entries' in info and len(info['entries']) > 0 else info
+    player = get_player(interaction)
+    
+    # 1. ตรวจสอบว่าเปิดผ่าน Spotify หรือไม่
+    if "spotify.com" in search:
+        queries = await bot.loop.run_in_executor(None, lambda: extract_spotify_queries(search))
+        if not queries:
+            await interaction.followup.send("ไม่สามารถดึงข้อมูลจาก Spotify ได้ กรุณาตรวจสอบ Client ID หรือ ลิงก์ครับ")
+            return
+        
+        await interaction.followup.send(f"กำลังประมวลผลเพลงจาก Spotify จำนวน {len(queries)} เพลง เข้าสู่คิว...")
+        
+        added_count = 0
+        for q in queries:
+            data = await bot.loop.run_in_executor(None, lambda: fetch_audio_info(q))
+            if data:
+                await player.queue.put(data)
+                added_count += 1
+                if player.current:
+                    await player.update_panel()
+                    
+        await interaction.channel.send(f"เพิ่มเพลงจาก Spotify เข้าคิวเรียบร้อยแล้ว {added_count} เพลง!")
 
-        player = get_player(interaction)
-        await player.queue.put({'url': video['url'], 'title': video['title']})
-        await interaction.followup.send(f"เพิ่มเพลง **{video['title']}** เข้าคิวเรียบร้อยครับ!")
+    # 2. เปิดผ่าน YouTube หรือ ค้นหาด้วยชื่อเพลง
+    else:
+        try:
+            info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
+            
+            # กรณีเป็น YouTube Playlist
+            if 'entries' in info:
+                entries = info['entries']
+                await interaction.followup.send(f"กำลังเพิ่ม Playlist YouTube จำนวน {len(entries)} เพลงเข้าคิว...")
+                for entry in entries:
+                    if entry:
+                        video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+                        await player.queue.put({'url': video_url, 'title': entry.get('title', 'Unknown Title')})
+                        if player.current:
+                            await player.update_panel()
+                await interaction.channel.send(f"เพิ่ม Playlist จำนวน {len(entries)} เพลง เรียบร้อยแล้ว!")
+            else:
+                # เพลงเดี่ยว
+                data = {'url': info['url'], 'title': info.get('title', 'Unknown Title')}
+                await player.queue.put(data)
+                await interaction.followup.send(f"เพิ่มเพลง **{data['title']}** เข้าคิวเรียบร้อยครับ!")
+                if player.current:
+                    await player.update_panel()
 
-        if player.current:
-            await player.update_panel()
+        except Exception as e:
+            await interaction.followup.send(f"เกิดข้อผิดพลาดในการดึงข้อมูลเพลง: {e}")
 
-    except Exception as e:
-        await interaction.followup.send(f"เกิดข้อผิดพลาดในการดึงเพลง: {e}")
-
-@bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้อออกจากห้องเสียง")
+@bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้ออกจากห้องเสียง")
 async def slash_stop(interaction: discord.Interaction):
     if interaction.guild.id in players:
         del players[interaction.guild.id]
     if interaction.guild.voice_client:
         await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("หยุดเพลงและออกจากห้องเสียงเรียบร้อยครับ!")
+        await interaction.response.send_message("หยุดเล่นเพลงและออกจากห้องเรียบร้อยครับ!")
     else:
         await interaction.response.send_message("บอทไม่ได้อยู่ในห้องเสียงครับ", ephemeral=True)
 
 # ==========================================
-# 7. Event Listeners
+# 8. Event Listeners (ระบบคนเข้า/ออก)
 # ==========================================
 @bot.event
 async def on_member_join(member):
@@ -467,6 +561,9 @@ async def on_ready():
     print(f"ล็อกอินเรียบร้อย! บอท {bot.user.name} พร้อมใช้งานแล้ว!")
     bot.add_view(VerifyView())
 
+# ==========================================
+# 9. Main Startup Execution
+# ==========================================
 async def main():
     await start_dummy_web_server()
     await bot.start(DISCORD_BOT_TOKEN)
