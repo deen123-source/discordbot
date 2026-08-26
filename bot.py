@@ -7,8 +7,6 @@ from discord.ext import commands
 import yt_dlp
 from aiohttp import web
 import static_ffmpeg
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
 
 static_ffmpeg.add_paths()
 
@@ -66,7 +64,7 @@ config = {
 }
 
 # ==========================================
-# 3. Audio Extraction Helper Functions
+# 3. Audio Extraction Helper Functions (yt-dlp Only)
 # ==========================================
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
@@ -83,61 +81,8 @@ FFMPEG_OPTIONS = {
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
-def extract_spotify_queries(url):
-    """แปลง Spotify Track/Playlist/Album เป็น Search Queries"""
-    queries = []
-    
-    # 1. ดึงค่า Key จาก Environment
-    client_id = os.getenv("SPOTIFY_CLIENT_ID")
-    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-    
-    if not client_id or not client_secret:
-        print(f"[Spotify API Error] Missing Keys! ID: {bool(client_id)}, Secret: {bool(client_secret)}")
-        return queries
-
-    try:
-        # 2. เชื่อมต่อ Spotify Client
-        auth_manager = SpotifyClientCredentials(
-            client_id=client_id.strip(),
-            client_secret=client_secret.strip()
-        )
-        spotify_client = spotipy.Spotify(auth_manager=auth_manager)
-
-        # 3. คลีน URL ตัด Query String เช่น ?si=... ออก
-        clean_url = url.split('?')[0].strip()
-
-        # 4. ตรวจสอบ Track / Playlist / Album
-        if "/track/" in clean_url:
-            track_id = clean_url.split("/track/")[-1].split("/")[0]
-            t = spotify_client.track(track_id)
-            track_name = t['name']
-            artist_name = t['artists'][0]['name']
-            queries.append(f"{track_name} {artist_name}")
-            print(f"[Spotify Success] Found Track: {track_name} - {artist_name}")
-                
-        elif "/playlist/" in clean_url:
-            playlist_id = clean_url.split("/playlist/")[-1].split("/")[0]
-            res = spotify_client.playlist_tracks(playlist_id)
-            for item in res.get('items', []):
-                t = item.get('track')
-                if t:
-                    queries.append(f"{t['name']} {t['artists'][0]['name']}")
-            print(f"[Spotify Success] Found Playlist with {len(queries)} tracks")
-                        
-        elif "/album/" in clean_url:
-            album_id = clean_url.split("/album/")[-1].split("/")[0]
-            res = spotify_client.album_tracks(album_id)
-            for t in res.get('items', []):
-                queries.append(f"{t['name']} {t['artists'][0]['name']}")
-            print(f"[Spotify Success] Found Album with {len(queries)} tracks")
-
-    except Exception as e:
-        print(f"[Spotify API Error Exception]: {e}")
-        
-    return queries
-    
 def fetch_audio_info(query):
-    """ค้นหาและดึง Stream URL ผ่าน yt-dlp"""
+    """ค้นหาเพลงและดึง Stream URL ผ่าน yt-dlp โดยตรง"""
     try:
         info = ytdl.extract_info(query, download=False)
         if 'entries' in info and len(info['entries']) > 0:
@@ -454,8 +399,8 @@ async def slash_setup_panel(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, view=MasterControlPanel(), ephemeral=True)
 
-@bot.tree.command(name="play", description="เปิดเพลง หรือ Playlist จาก YouTube / Spotify")
-@app_commands.describe(search="ชื่อเพลง, ลิงก์ YouTube หรือลิงก์ Spotify (Track/Playlist)")
+@bot.tree.command(name="play", description="เปิดเพลง หรือ Playlist จาก YouTube หรือค้นหาด้วยชื่อเพลง")
+@app_commands.describe(search="ชื่อเพลง หรือ ลิงก์ YouTube (Playlist / Video)")
 async def slash_play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice:
         await interaction.response.send_message("ดีนต้องเข้าห้องเสียงก่อนสั่งเปิดเพลงนะ!", ephemeral=True)
@@ -468,53 +413,31 @@ async def slash_play(interaction: discord.Interaction, search: str):
 
     player = get_player(interaction)
     
-    # 1. ตรวจสอบว่าเปิดผ่าน Spotify หรือไม่
-    if "spotify.com" in search:
-        queries = await bot.loop.run_in_executor(None, lambda: extract_spotify_queries(search))
-        if not queries:
-            await interaction.followup.send("ไม่สามารถดึงข้อมูลจาก Spotify ได้ กรุณาตรวจสอบ Client ID / Client Secret หรือ ลิงก์ครับ")
-            return
+    try:
+        info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
         
-        await interaction.followup.send(f"กำลังประมวลผลเพลงจาก Spotify จำนวน {len(queries)} เพลง เข้าสู่คิว...")
-        
-        added_count = 0
-        for q in queries:
-            data = await bot.loop.run_in_executor(None, lambda: fetch_audio_info(q))
-            if data:
-                await player.queue.put(data)
-                added_count += 1
-                if player.current:
-                    await player.update_panel()
-                    
-        await interaction.channel.send(f"เพิ่มเพลงจาก Spotify เข้าคิวเรียบร้อยแล้ว {added_count} เพลง!")
+        # กรณีเป็น YouTube Playlist
+        if 'entries' in info and info['entries']:
+            entries = info['entries']
+            await interaction.followup.send(f"กำลังเพิ่ม Playlist YouTube จำนวน {len(entries)} เพลงเข้าคิว...")
+            for entry in entries:
+                if entry:
+                    video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
+                    await player.queue.put({'url': video_url, 'title': entry.get('title', 'Unknown Title')})
+                    if player.current:
+                        await player.update_panel()
+            await interaction.channel.send(f"เพิ่ม Playlist จำนวน {len(entries)} เพลง เรียบร้อยแล้ว!")
+        else:
+            # เพลงเดี่ยว หรือ ค้นหาด้วยชื่อเพลง
+            video = info['entries'][0] if 'entries' in info and len(info['entries']) > 0 else info
+            data = {'url': video['url'], 'title': video.get('title', 'Unknown Title')}
+            await player.queue.put(data)
+            await interaction.followup.send(f"เพิ่มเพลง **{data['title']}** เข้าคิวเรียบร้อยครับ!")
+            if player.current:
+                await player.update_panel()
 
-    # 2. เปิดผ่าน YouTube หรือ ค้นหาด้วยชื่อเพลง
-    else:
-        try:
-            info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
-            
-            # กรณีเป็น YouTube Playlist
-            if 'entries' in info and info['entries']:
-                entries = info['entries']
-                await interaction.followup.send(f"กำลังเพิ่ม Playlist YouTube จำนวน {len(entries)} เพลงเข้าคิว...")
-                for entry in entries:
-                    if entry:
-                        video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
-                        await player.queue.put({'url': video_url, 'title': entry.get('title', 'Unknown Title')})
-                        if player.current:
-                            await player.update_panel()
-                await interaction.channel.send(f"เพิ่ม Playlist จำนวน {len(entries)} เพลง เรียบร้อยแล้ว!")
-            else:
-                # เพลงเดี่ยว
-                video = info['entries'][0] if 'entries' in info and len(info['entries']) > 0 else info
-                data = {'url': video['url'], 'title': video.get('title', 'Unknown Title')}
-                await player.queue.put(data)
-                await interaction.followup.send(f"เพิ่มเพลง **{data['title']}** เข้าคิวเรียบร้อยครับ!")
-                if player.current:
-                    await player.update_panel()
-
-        except Exception as e:
-            await interaction.followup.send(f"เกิดข้อผิดพลาดในการดึงข้อมูลเพลง: {e}")
+    except Exception as e:
+        await interaction.followup.send(f"เกิดข้อผิดพลาดในการดึงข้อมูลเพลง: {e}")
 
 @bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้ออกจากห้องเสียง")
 async def slash_stop(interaction: discord.Interaction):
