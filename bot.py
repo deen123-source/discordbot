@@ -3,7 +3,6 @@ import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
-from openai import OpenAI
 import yt_dlp
 from aiohttp import web
 import static_ffmpeg
@@ -26,21 +25,9 @@ async def start_dummy_web_server():
     await site.start()
 
 # ==========================================
-# 1. ตั้งค่า Key และ Client
+# 1. ตั้งค่า Discord Token & Bot Client
 # ==========================================
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "ใส่_OPENROUTER_API_KEY_ของคุณที่นี่")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_ของคุณที่นี่")
-MODEL_NAME = "stealth/ox-alpha"
-
-# ใส่ Guild ID ของเซิร์ฟเวอร์ดีนตรงนี้ (เปลี่ยนตัวเลขเป็น ID เซิร์ฟเวอร์จริงของคุณ)
-# วิธีเอา ID: เปิด Developer Mode ใน Discord > คลิกขวาชื่อเซิร์ฟเวอร์ > Copy Server ID
-GUILD_ID = 123456789012345678 
-MY_GUILD = discord.Object(id=GUILD_ID)
-
-ai_client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -50,10 +37,9 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Sync Slash Commands เข้า Guild เพื่อให้คำสั่งขึ้นใช้ได้ทันทีไม่ต้องรอ 1 ชม.
-        self.tree.copy_global_to(guild=MY_GUILD)
+        # ซิงค์ Slash Commands แบบ Global (ใช้งานได้ทุกเซิร์ฟเวอร์)
         await self.tree.sync()
-        print("Sync Slash Commands เข้า Guild เรียบร้อยแล้ว!")
+        print("Sync Slash Commands เรียบร้อยแล้ว!")
 
 bot = MyBot()
 
@@ -61,8 +47,6 @@ bot = MyBot()
 # 2. ตัวแปรตั้งค่าระบบต่างๆ (In-Memory Config)
 # ==========================================
 config = {
-    "ai_enabled": True,
-    "ai_channel_id": None,        # กำหนด ID ห้องที่อนุญาตให้ AI ตอบ (None คือตอบได้ทุกห้อง)
     "welcome_channel_id": None,   # ห้องแจ้งคนเข้า
     "goodbye_channel_id": None,   # ห้องแจ้งคนออก
     "welcome_message": "ยินดีต้อนรับคุณ {member} เข้าสู่เซิร์ฟเวอร์!",
@@ -89,7 +73,7 @@ FFMPEG_OPTIONS = {
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
 # ==========================================
-# 3. ระบบคิวเพลง และ Control Panel (แก้บัคส่งซ้ำ 2 รอบ)
+# 3. ระบบเล่นเพลง และ Control Panel
 # ==========================================
 class MusicPlayer:
     def __init__(self, interaction):
@@ -288,23 +272,6 @@ async def slash_stop(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("บอทไม่ได้อยู่ในห้องเสียงครับ", ephemeral=True)
 
-@bot.tree.command(name="ai_toggle", description="เปิด หรือ ปิด ระบบ AI ตอบออโต้")
-@app_commands.describe(status="เลือก True เพื่อเปิด หรือ False เพื่อปิด")
-async def slash_ai_toggle(interaction: discord.Interaction, status: bool):
-    config["ai_enabled"] = status
-    msg = "เปิด" if status else "ปิด"
-    await interaction.response.send_message(f"ทำการ {msg} ระบบตอบออโต้ AI เรียบร้อยแล้วครับ!")
-
-@bot.tree.command(name="set_ai_channel", description="กำหนดห้องสำหรับการตอบออโต้ของ AI (ถ้าไม่เลือกจะตอบทุกห้อง)")
-@app_commands.describe(channel="เลือกห้องที่ต้องการให้ AI ตอบ")
-async def slash_set_ai_channel(interaction: discord.Interaction, channel: discord.TextChannel = None):
-    if channel:
-        config["ai_channel_id"] = channel.id
-        await interaction.response.send_message(f"ตั้งค่าให้ AI ตอบเฉพาะในห้อง {channel.mention} เรียบร้อย!")
-    else:
-        config["ai_channel_id"] = None
-        await interaction.response.send_message("ยกเลิกการจำกัดห้อง! AI จะตอบในทุกๆ ห้องแชทแล้วครับ")
-
 @bot.tree.command(name="setup_welcome", description="ตั้งค่าระบบต้อนรับคนเข้าและคนออกจากดิส")
 @app_commands.describe(
     welcome_channel="ห้องสำหรับแจ้งคนเข้า",
@@ -360,7 +327,7 @@ async def slash_setup_verify(
     await interaction.response.send_message("สร้างปุ่มยืนยันตัวตนเรียบร้อยครับ!", ephemeral=True)
 
 # ==========================================
-# 6. Event Listeners (คนเข้า/ออก และ AI แชท)
+# 6. Event Listeners (คนเข้า/ออก)
 # ==========================================
 @bot.event
 async def on_member_join(member):
@@ -375,7 +342,6 @@ async def on_member_join(member):
                 color=discord.Color.green()
             )
             
-            # ดึงรูปโปรไฟล์ (Avatar) ของคนที่เข้ามาใหม่มาแปะใน Embed
             avatar_url = member.display_avatar.url
             embed.set_thumbnail(url=avatar_url)
             
@@ -384,7 +350,6 @@ async def on_member_join(member):
             else:
                 embed.set_image(url=avatar_url)
 
-            # พิมพ์แท็กเรียกชื่อผู้ใช้ใหม่พร้อมส่ง Embed
             await channel.send(content=f"ยินดีต้อนรับ {member.mention} !", embed=embed)
 
 @bot.event
@@ -407,45 +372,6 @@ async def on_ready():
     print(f"ล็อกอินเรียบร้อย! บอท {bot.user.name} พร้อมใช้งานแล้ว!")
     bot.add_view(VerifyView())
     await start_dummy_web_server()
-
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-
-    clean_content = message.content.strip()
-
-    # เช็คเงื่อนไขระบบตอบออโต้ AI
-    if not config["ai_enabled"]:
-        return
-
-    if config["ai_channel_id"] and message.channel.id != config["ai_channel_id"]:
-        return
-
-    if clean_content.startswith("/") or clean_content.startswith("!"):
-        return
-
-    if not clean_content:
-        return
-
-    async with message.channel.typing():
-        try:
-            response = await bot.loop.run_in_executor(
-                None,
-                lambda: ai_client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[{"role": "user", "content": clean_content}]
-                )
-            )
-            reply_text = response.choices[0].message.content
-
-            if len(reply_text) > 2000:
-                for i in range(0, len(reply_text), 1900):
-                    await message.channel.send(reply_text[i:i+1900])
-            else:
-                await message.channel.send(reply_text)
-        except Exception as e:
-            await message.channel.send(f"เกิดข้อผิดพลาดในการประมวลผล AI: {e}")
 
 if __name__ == "__main__":
     bot.run(DISCORD_BOT_TOKEN)
