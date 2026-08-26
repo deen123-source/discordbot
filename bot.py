@@ -12,13 +12,16 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 
 # ==========================================
-# 0. บังคับ Encoding ให้เป็น UTF-8 (ป้องกัน ASCII Error)
+# 0. บังคับ Encoding UTF-8 ทั้งระบบ
 # ==========================================
-if sys.stdout.encoding.lower() != 'utf-8':
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
+
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     try:
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
-    except AttributeError:
+    except Exception:
         pass
 
 static_ffmpeg.add_paths()
@@ -91,14 +94,19 @@ config = {
 }
 
 # ==========================================
-# 3. Audio Extraction Helper Functions (yt-dlp)
+# 3. Audio Extraction Helper Functions (yt-dlp แบบกันการบล็อก)
 # ==========================================
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
     'quiet': True,
+    'no_warnings': True,
     'default_search': 'ytsearch',
-    'source_address': '0.0.0.0'
+    'source_address': '0.0.0.0',
+    'nocheckcertificate': True,
+    'ignoreerrors': True,
+    'geo_bypass': True,
+    'cachedir': False
 }
 
 FFMPEG_OPTIONS = {
@@ -140,18 +148,19 @@ class MusicPlayer:
                 except TimeoutError:
                     return self.destroy(self.guild)
 
-            source = discord.FFmpegPCMAudio(
-                self.current['url'],
-                executable='ffmpeg',
-                **FFMPEG_OPTIONS
-            )
-
-            self.guild.voice_client.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(self.next.set))
-
-            await self.update_panel()
-            await self.next.wait()
-
-            source.cleanup()
+            try:
+                source = discord.FFmpegPCMAudio(
+                    self.current['url'],
+                    executable='ffmpeg',
+                    **FFMPEG_OPTIONS
+                )
+                self.guild.voice_client.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(self.next.set))
+                await self.update_panel()
+                await self.next.wait()
+                source.cleanup()
+            except Exception as e:
+                print(f"Play error: {e}")
+                await self.next.wait()
 
     async def update_panel(self):
         if not self.current or self._updating:
@@ -432,16 +441,16 @@ async def slash_play(interaction: discord.Interaction, search: str):
     # --- 1. ตรวจสอบและดึงข้อมูล Spotify ---
     if "open.spotify.com" in query:
         if not sp:
-            await interaction.followup.send("กรุณาตั้งค่า SPOTIPY_CLIENT_ID และ SPOTIPY_CLIENT_SECRET บน Render ก่อนใช้งานลิงก์ Spotify ครับ!")
+            await interaction.followup.send("กรุณาตั้งค่า SPOTIPY_CLIENT_ID และ SPOTIPY_CLIENT_SECRET บน Render ก่อนครับ!")
             return
         
         try:
             clean_url = query.split('?')[0]
             if "/track/" in clean_url:
                 track_info = sp.track(clean_url)
-                track_name = str(track_info['name'])
-                artist_name = str(track_info['artists'][0]['name'])
-                search_queries.append(f"{track_name} {artist_name}")
+                t_name = str(track_info.get('name', ''))
+                a_name = str(track_info['artists'][0]['name']) if track_info.get('artists') else ''
+                search_queries.append(f"{t_name} {a_name}".strip())
 
             elif "/playlist/" in clean_url:
                 results = sp.playlist_items(clean_url)
@@ -449,36 +458,38 @@ async def slash_play(interaction: discord.Interaction, search: str):
                 for item in items:
                     track = item.get('track')
                     if track:
-                        t_name = str(track['name'])
-                        a_name = str(track['artists'][0]['name'])
-                        search_queries.append(f"{t_name} {a_name}")
+                        t_name = str(track.get('name', ''))
+                        a_name = str(track['artists'][0]['name']) if track.get('artists') else ''
+                        search_queries.append(f"{t_name} {a_name}".strip())
 
             elif "/album/" in clean_url:
                 results = sp.album_tracks(clean_url)
                 items = results.get('items', [])
                 for track in items:
-                    t_name = str(track['name'])
-                    a_name = str(track['artists'][0]['name'])
-                    search_queries.append(f"{t_name} {a_name}")
+                    if track:
+                        t_name = str(track.get('name', ''))
+                        a_name = str(track['artists'][0]['name']) if track.get('artists') else ''
+                        search_queries.append(f"{t_name} {a_name}".strip())
         except Exception as e:
-            await interaction.followup.send(f"ดึงข้อมูลจาก Spotify ไม่สำเร็จ: {e}")
+            err_msg = str(e).encode('ascii', 'ignore').decode('ascii')
+            await interaction.followup.send(f"เกิดข้อผิดพลาดในการดึงข้อมูล Spotify: {err_msg if err_msg else 'Invalid URL/API Key'}")
             return
     elif not query.startswith("http://") and not query.startswith("https://"):
         search_queries.append(query)
     else:
-        # กรณีเป็น URL ของ YouTube ตรงๆ
+        # ลิงก์ YouTube ตรงๆ
         search_queries.append(query)
 
     if not search_queries:
-        await interaction.followup.send("ไม่พบรายการเพลงจากลิงก์ที่ส่งมาครับ!")
+        await interaction.followup.send("ไม่พบรายการเพลงที่สามารถประมวลผลได้ครับ!")
         return
 
-    # --- 2. นำเพลงไปค้นหาบน YouTube แล้วเข้าคิว ---
+    # --- 2. ค้นหาบน YouTube และเพิ่มเข้าคิว ---
     added_count = 0
     first_title = ""
 
     for item_query in search_queries:
-        yt_query = item_query if item_query.startswith("http") else f"ytsearch:{item_query}"
+        yt_query = item_query if item_query.startswith("http") else f"ytsearch1:{item_query}"
         try:
             info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(yt_query, download=False))
             if not info:
@@ -500,13 +511,14 @@ async def slash_play(interaction: discord.Interaction, search: str):
                 added_count += 1
                 if not first_title:
                     first_title = track_title
-        except Exception:
+        except Exception as e:
+            print(f"Fetch error: {e}")
             continue
 
     if added_count == 1:
         await interaction.followup.send(f"เพิ่มเพลง **{first_title}** เข้าคิวเรียบร้อยครับ!")
     elif added_count > 1:
-        await interaction.followup.send(f"เพิ่มเพลงจาก Spotify Playlist เข้าคิวทั้งหมด **{added_count}** เพลงเรียบร้อยครับ!")
+        await interaction.followup.send(f"เพิ่มเพลงเข้าคิวทั้งหมด **{added_count}** เพลงเรียบร้อยครับ!")
     else:
         await interaction.followup.send("เกิดข้อผิดพลาดในการดึงข้อมูลเพลงจาก YouTube ครับ!")
 
