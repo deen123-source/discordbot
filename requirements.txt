@@ -4,3 +4,4 @@ yt-dlp
 aiohttp
 davey
 static-ffmpeg
+spotipy
