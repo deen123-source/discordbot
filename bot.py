@@ -7,6 +7,8 @@ from discord.ext import commands
 import yt_dlp
 from aiohttp import web
 import static_ffmpeg
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 
 static_ffmpeg.add_paths()
 
@@ -26,9 +28,23 @@ async def start_dummy_web_server():
     await site.start()
 
 # ==========================================
-# 1. ตั้งค่า Bot Client
+# 1. ตั้งค่า Bot Client & Spotify API
 # ==========================================
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_ของคุณ")
+
+SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID", "ใส่_SPOTIFY_CLIENT_ID")
+SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "ใส่_SPOTIFY_CLIENT_SECRET")
+
+sp = None
+if SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET:
+    try:
+        sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+            client_id=SPOTIPY_CLIENT_ID,
+            client_secret=SPOTIPY_CLIENT_SECRET
+        ))
+        print("เชื่อมต่อ Spotify API สำเร็จ!")
+    except Exception as e:
+        print(f"เชื่อมต่อ Spotify API ไม่สำเร็จ: {e}")
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -400,54 +416,91 @@ async def slash_play(interaction: discord.Interaction, search: str):
 
     player = get_player(interaction)
     query = search.strip()
+    search_queries = []
 
-    # ตรวจจับถ้าผู้ใช้ส่งลิงก์ Spotify มา ให้แกะชื่อเพลง/Playlist แปลงเป็นคำค้นหาบน YouTube
-    if "spotify.com" in query:
-        clean_url = query.split('?')[0]
-        parts = [p for p in clean_url.split('/') if p]
+    # --- 1. ตรวจสอบและดึงข้อมูล Spotify ---
+    if "open.spotify.com" in query:
+        if not sp:
+            await interaction.followup.send("กรุณาตั้งค่า SPOTIPY_CLIENT_ID และ SPOTIPY_CLIENT_SECRET บน Render ก่อนใช้งานลิงก์ Spotify ครับ!")
+            return
         
-        if len(parts) >= 2:
-            type_type = parts[-2]
-            name_slug = parts[-1].replace('-', ' ')
-            query = f"ytsearch:{name_slug} {type_type}"
-        else:
-            query = f"ytsearch:{query}"
+        try:
+            clean_url = query.split('?')[0]
+            if "/track/" in clean_url:
+                track_info = sp.track(clean_url)
+                track_name = track_info['name']
+                artist_name = track_info['artists'][0]['name']
+                search_queries.append(f"{track_name} {artist_name}")
+
+            elif "/playlist/" in clean_url:
+                results = sp.playlist_items(clean_url)
+                items = results.get('items', [])
+                for item in items:
+                    track = item.get('track')
+                    if track:
+                        t_name = track['name']
+                        a_name = track['artists'][0]['name']
+                        search_queries.append(f"{t_name} {a_name}")
+
+            elif "/album/" in clean_url:
+                results = sp.album_tracks(clean_url)
+                items = results.get('items', [])
+                for track in items:
+                    t_name = track['name']
+                    a_name = track['artists'][0]['name']
+                    search_queries.append(f"{t_name} {a_name}")
+        except Exception as e:
+            await interaction.followup.send(f"ดึงข้อมูลจาก Spotify ไม่สำเร็จ: {e}")
+            return
     elif not query.startswith("http://") and not query.startswith("https://"):
-        query = f"ytsearch:{query}"
+        search_queries.append(query)
+    else:
+        # กรณีเป็น URL ของ YouTube ตรงๆ
+        search_queries.append(query)
 
-    try:
-        info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
-        
-        if not info:
-            await interaction.followup.send("ไม่พบข้อมูลเพลงนี้ครับ ลองเปลี่ยนคำค้นหาดูนะ!")
-            return
+    if not search_queries:
+        await interaction.followup.send("ไม่พบรายการเพลงจากลิงก์ที่ส่งมาครับ!")
+        return
 
-        # แกะข้อมูล Video Entry ป้องกัน KeyError: 'url'
-        video_data = None
-        if 'entries' in info and info['entries']:
-            valid_entries = [e for e in info['entries'] if e]
-            if valid_entries:
-                video_data = valid_entries[0]
-        else:
-            video_data = info
+    # --- 2. นำเพลงไปค้นหาบน YouTube แล้วเข้าคิว ---
+    added_count = 0
+    first_title = ""
 
-        if not video_data:
-            await interaction.followup.send("ไม่สามารถดึงข้อมูลลิงก์/เพลงนี้ได้ครับ!")
-            return
+    for item_query in search_queries:
+        yt_query = item_query if item_query.startswith("http") else f"ytsearch:{item_query}"
+        try:
+            info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(yt_query, download=False))
+            if not info:
+                continue
 
-        # ดึง URL และ ชื่อเพลงที่ถูกต้อง
-        stream_url = video_data.get('url') or f"https://www.youtube.com/watch?v={video_data.get('id')}"
-        track_title = video_data.get('title', 'Unknown Title')
+            video_data = None
+            if 'entries' in info and info['entries']:
+                valid_entries = [e for e in info['entries'] if e]
+                if valid_entries:
+                    video_data = valid_entries[0]
+            else:
+                video_data = info
 
-        data = {'url': stream_url, 'title': track_title}
-        await player.queue.put(data)
-        await interaction.followup.send(f"เพิ่มเพลง **{data['title']}** เข้าคิวเรียบร้อยครับ!")
+            if video_data:
+                stream_url = video_data.get('url') or f"https://www.youtube.com/watch?v={video_data.get('id')}"
+                track_title = video_data.get('title', 'Unknown Title')
+                
+                await player.queue.put({'url': stream_url, 'title': track_title})
+                added_count += 1
+                if not first_title:
+                    first_title = track_title
+        except Exception:
+            continue
 
-        if player.current:
-            await player.update_panel()
+    if added_count == 1:
+        await interaction.followup.send(f"เพิ่มเพลง **{first_title}** เข้าคิวเรียบร้อยครับ!")
+    elif added_count > 1:
+        await interaction.followup.send(f"เพิ่มเพลงจาก Spotify Playlist เข้าคิวทั้งหมด **{added_count}** เพลงเรียบร้อยครับ!")
+    else:
+        await interaction.followup.send("เกิดข้อผิดพลาดในการดึงข้อมูลเพลงจาก YouTube ครับ!")
 
-    except Exception as e:
-        await interaction.followup.send(f"เกิดข้อผิดพลาดในการดึงข้อมูลเพลง: {e}")
+    if player.current:
+        await player.update_panel()
 
 @bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้ออกจากห้องเสียง")
 async def slash_stop(interaction: discord.Interaction):
