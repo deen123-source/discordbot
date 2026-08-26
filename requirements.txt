@@ -1,7 +1,5 @@
-discord.py[voice]
-openai
-yt-dlp
-aiohttp
-davey
-static-ffmpeg
+yt-dlp>=2024.08.01
 spotipy
+discord.py
+static-ffmpeg
+aiohttp
