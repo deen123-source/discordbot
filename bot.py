@@ -68,7 +68,7 @@ config = {
 # ==========================================
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
-    'noplaylist': False,
+    'noplaylist': True,
     'quiet': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0'
@@ -401,14 +401,15 @@ async def slash_play(interaction: discord.Interaction, search: str):
     player = get_player(interaction)
     query = search.strip()
 
-    # แปลงลิงก์ Spotify หรือข้อความธรรมดา ให้กลายเป็นคำค้นหาบน YouTube
+    # ตรวจจับถ้าผู้ใช้ส่งลิงก์ Spotify มา ให้แกะชื่อเพลง/Playlist แปลงเป็นคำค้นหาบน YouTube
     if "spotify.com" in query:
         clean_url = query.split('?')[0]
         parts = [p for p in clean_url.split('/') if p]
         
-        if len(parts) >= 2 and parts[-2] == "track":
-            track_identifier = parts[-1].replace('-', ' ')
-            query = f"ytsearch:{track_identifier} song"
+        if len(parts) >= 2:
+            type_type = parts[-2]
+            name_slug = parts[-1].replace('-', ' ')
+            query = f"ytsearch:{name_slug} {type_type}"
         else:
             query = f"ytsearch:{query}"
     elif not query.startswith("http://") and not query.startswith("https://"):
@@ -421,28 +422,26 @@ async def slash_play(interaction: discord.Interaction, search: str):
             await interaction.followup.send("ไม่พบข้อมูลเพลงนี้ครับ ลองเปลี่ยนคำค้นหาดูนะ!")
             return
 
-        # กรณีเป็น Playlist หรือผลลัพธ์การค้นหา
+        # แกะข้อมูล Video Entry ป้องกัน KeyError: 'url'
+        video_data = None
         if 'entries' in info and info['entries']:
-            if query.startswith("ytsearch:"):
-                video = info['entries'][0]
-                data = {'url': video['url'], 'title': video.get('title', 'Unknown Title')}
-                await player.queue.put(data)
-                await interaction.followup.send(f"เพิ่มเพลง **{data['title']}** เข้าคิวเรียบร้อยครับ!")
-            else:
-                entries = info['entries']
-                await interaction.followup.send(f"กำลังเพิ่ม Playlist จำนวน {len(entries)} เพลงเข้าคิว...")
-                for entry in entries:
-                    if entry:
-                        video_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}"
-                        await player.queue.put({'url': video_url, 'title': entry.get('title', 'Unknown Title')})
-                        if player.current:
-                            await player.update_panel()
-                await interaction.channel.send(f"เพิ่ม Playlist จำนวน {len(entries)} เพลง เรียบร้อยแล้ว!")
+            valid_entries = [e for e in info['entries'] if e]
+            if valid_entries:
+                video_data = valid_entries[0]
         else:
-            # เพลงเดี่ยว
-            data = {'url': info['url'], 'title': info.get('title', 'Unknown Title')}
-            await player.queue.put(data)
-            await interaction.followup.send(f"เพิ่มเพลง **{data['title']}** เข้าคิวเรียบร้อยครับ!")
+            video_data = info
+
+        if not video_data:
+            await interaction.followup.send("ไม่สามารถดึงข้อมูลลิงก์/เพลงนี้ได้ครับ!")
+            return
+
+        # ดึง URL และ ชื่อเพลงที่ถูกต้อง
+        stream_url = video_data.get('url') or f"https://www.youtube.com/watch?v={video_data.get('id')}"
+        track_title = video_data.get('title', 'Unknown Title')
+
+        data = {'url': stream_url, 'title': track_title}
+        await player.queue.put(data)
+        await interaction.followup.send(f"เพิ่มเพลง **{data['title']}** เข้าคิวเรียบร้อยครับ!")
 
         if player.current:
             await player.update_panel()
