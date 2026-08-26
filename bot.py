@@ -43,14 +43,16 @@ class MyBot(commands.Bot):
 bot = MyBot()
 
 # ==========================================
-# 2. ตัวแปรตั้งค่าระบบต่างๆ
+# 2. ตัวแปรตั้งค่าระบบ (Global Storage)
 # ==========================================
 config = {
     "welcome_channel_id": None,
     "goodbye_channel_id": None,
-    "welcome_message": "ยินดีต้อนรับ {member} !",
+    "welcome_message": "ยินดีต้อนรับ {member} เข้าสู่เซิร์ฟเวอร์!",
     "goodbye_message": "คุณ {member} ได้ออกจากเซิร์ฟเวอร์ไปแล้ว...",
     "welcome_image_url": "",
+    "verify_title": "📌 ยืนยันตัวตน",
+    "verify_desc": "ยินดีต้อนรับเข้าสู่เซิร์ฟเวอร์! กรุณากดปุ่มด้านล่างเพื่อทำการยืนยันตัวตนและรับยศครับ",
     "verify_role_id": None,
     "verify_log_channel_id": None
 }
@@ -219,14 +221,12 @@ class AdvancedVerifyModal(discord.ui.Modal, title="ยืนยันตัว�
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 1. มอบยศให้สมาชิก
         role_id = config["verify_role_id"]
         if role_id:
             role = interaction.guild.get_role(role_id)
             if role:
                 await interaction.user.add_roles(role)
 
-        # 2. สร้าง Embed ส่งไปยังห้อง Log (ถ้ามีการตั้งค่าไว้)
         log_ch_id = config["verify_log_channel_id"]
         if log_ch_id:
             log_channel = interaction.guild.get_channel(log_ch_id)
@@ -260,13 +260,106 @@ class VerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="ยืนยันตัวตน", style=discord.ButtonStyle.success, emoji="📌", custom_id="verify_button_custom")
+    @discord.ui.button(label="ยืนยันตัวตน", style=discord.ButtonStyle.success, emoji="📌", custom_id="verify_button_custom_v2")
     async def verify_button_click(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AdvancedVerifyModal())
 
 # ==========================================
-# 5. Slash Commands
+# 5. CONTROL PANEL ระบบตั้งค่าบอทผ่าน UI
 # ==========================================
+class EditVerifyEmbedModal(discord.ui.Modal, title="แต่งข้อความ Embed ยืนยันตัวตน"):
+    title_input = discord.ui.TextInput(label="หัวข้อ (Title)", default=config["verify_title"], required=True)
+    desc_input = discord.ui.TextInput(label="รายละเอียด (Description)", default=config["verify_desc"], style=discord.TextStyle.paragraph, required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        config["verify_title"] = self.title_input.value
+        config["verify_desc"] = self.desc_input.value
+        await interaction.response.send_message("อัปเดตข้อความ Embed ยืนยันตัวตนสำเร็จ!", ephemeral=True)
+
+class EditWelcomeModal(discord.ui.Modal, title="ตั้งค่าข้อความ คนเข้า/ออก"):
+    welcome_msg = discord.ui.TextInput(label="ข้อความคนเข้า (ใช้ {member} แทนชื่อ)", default=config["welcome_message"], style=discord.TextStyle.paragraph)
+    goodbye_msg = discord.ui.TextInput(label="ข้อความคนออก (ใช้ {member} แทนชื่อ)", default=config["goodbye_message"], style=discord.TextStyle.paragraph)
+    img_url = discord.ui.TextInput(label="URL รูปภาพวอลเปเปอร์", default=config["welcome_image_url"], required=False)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        config["welcome_message"] = self.welcome_msg.value
+        config["goodbye_message"] = self.goodbye_msg.value
+        config["welcome_image_url"] = self.img_url.value
+        await interaction.response.send_message("อัปเดตข้อความการแจ้งเตือนคนเข้า-ออกเรียบร้อย!", ephemeral=True)
+
+class MasterControlPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.select(
+        placeholder="เลือกยศที่จะให้เมื่อยืนยันตัวตน...",
+        cls=discord.ui.RoleSelect,
+        custom_id="select_verify_role"
+    )
+    async def select_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        config["verify_role_id"] = select.values[0].id
+        await interaction.response.send_message(f"ตั้งค่ายศยืนยันตัวตนเป็น **{select.values[0].name}** เรียบร้อย!", ephemeral=True)
+
+    @discord.ui.select(
+        placeholder="เลือกห้องส่ง Log ยืนยันตัวตน...",
+        cls=discord.ui.ChannelSelect,
+        channel_types=[discord.ChannelType.text],
+        custom_id="select_log_channel"
+    )
+    async def select_log_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        config["verify_log_channel_id"] = select.values[0].id
+        await interaction.response.send_message(f"ตั้งค่าห้องส่ง Log เป็น {select.values[0].mention} เรียบร้อย!", ephemeral=True)
+
+    @discord.ui.select(
+        placeholder="เลือกห้องแจ้งเตือน คนเข้า...",
+        cls=discord.ui.ChannelSelect,
+        channel_types=[discord.ChannelType.text],
+        custom_id="select_welcome_channel"
+    )
+    async def select_welcome_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        config["welcome_channel_id"] = select.values[0].id
+        await interaction.response.send_message(f"ตั้งค่าห้องแจ้งคนเข้าเป็น {select.values[0].mention} เรียบร้อย!", ephemeral=True)
+
+    @discord.ui.select(
+        placeholder="เลือกห้องแจ้งเตือน คนออก...",
+        cls=discord.ui.ChannelSelect,
+        channel_types=[discord.ChannelType.text],
+        custom_id="select_goodbye_channel"
+    )
+    async def select_goodbye_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        config["goodbye_channel_id"] = select.values[0].id
+        await interaction.response.send_message(f"ตั้งค่าห้องแจ้งคนออกเป็น {select.values[0].mention} เรียบร้อย!", ephemeral=True)
+
+    @discord.ui.button(label="แต่งข้อความปุ่มยืนยัน", style=discord.ButtonStyle.primary, emoji="✏️", row=4)
+    async def edit_verify_text(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EditVerifyEmbedModal())
+
+    @discord.ui.button(label="แต่งข้อความต้อนรับ/คนออก", style=discord.ButtonStyle.primary, emoji="🖼️", row=4)
+    async def edit_welcome_text(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EditWelcomeModal())
+
+    @discord.ui.button(label="🚀 ส่งปุ่มยืนยันตัวตนลงห้องนี้", style=discord.ButtonStyle.success, emoji="✅", row=4)
+    async def spawn_verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title=config["verify_title"],
+            description=config["verify_desc"],
+            color=discord.Color.green()
+        )
+        await interaction.channel.send(embed=embed, view=VerifyView())
+        await interaction.response.send_message("ส่งปุ่มยืนยันตัวตนเรียบร้อยแล้ว!", ephemeral=True)
+
+# ==========================================
+# 6. Slash Commands
+# ==========================================
+@bot.tree.command(name="setup_panel", description="เปิดแผงควบคุมตั้งค่าระบบบอท (Control Panel)")
+async def slash_setup_panel(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="⚙️ Master Control Panel - แผงควบคุมบอท",
+        description="ใช้เมนูด้านล่างนี้เพื่อตั้งค่าห้อง ยศ และปรับแต่งข้อความต่าง ๆ ได้เลยครับ",
+        color=discord.Color.purple()
+    )
+    await interaction.response.send_message(embed=embed, view=MasterControlPanel(), ephemeral=True)
+
 @bot.tree.command(name="play", description="เปิดเพลงหรือเพิ่มเข้าคิว")
 @app_commands.describe(search="ชื่อเพลง หรือ Link จาก YouTube / SoundCloud")
 async def slash_play(interaction: discord.Interaction, search: str):
@@ -303,60 +396,8 @@ async def slash_stop(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("บอทไม่ได้อยู่ในห้องเสียงครับ", ephemeral=True)
 
-@bot.tree.command(name="setup_welcome", description="ตั้งค่าระบบต้อนรับคนเข้าและคนออกจากดิส")
-@app_commands.describe(
-    welcome_channel="ห้องสำหรับแจ้งคนเข้า",
-    goodbye_channel="ห้องสำหรับแจ้งคนออก",
-    welcome_msg="ข้อความต้อนรับ",
-    goodbye_msg="ข้อความคนออก",
-    image_url="URL รูปภาพวอลเปเปอร์หลัก"
-)
-async def slash_setup_welcome(
-    interaction: discord.Interaction,
-    welcome_channel: discord.TextChannel = None,
-    goodbye_channel: discord.TextChannel = None,
-    welcome_msg: str = None,
-    goodbye_msg: str = None,
-    image_url: str = None
-):
-    if welcome_channel:
-        config["welcome_channel_id"] = welcome_channel.id
-    if goodbye_channel:
-        config["goodbye_channel_id"] = goodbye_channel.id
-    if welcome_msg:
-        config["welcome_message"] = welcome_msg
-    if goodbye_msg:
-        config["goodbye_message"] = goodbye_msg
-    if image_url is not None:
-        config["welcome_image_url"] = image_url
-
-    await interaction.response.send_message("อัปเดตระบบแจ้งเตือนคนเข้า-ออกจากดิสเรียบร้อยครับ!", ephemeral=True)
-
-@bot.tree.command(name="setup_verify", description="สร้างปุ่มและตั้งค่าระบบยืนยันตัวตน")
-@app_commands.describe(
-    role="ยศที่จะมอบให้เมื่อยืนยันสำเร็จ",
-    log_channel="ห้องสำหรับส่งบันทึกข้อมูลคนที่ยืนยันสำเร็จ"
-)
-async def slash_setup_verify(
-    interaction: discord.Interaction,
-    role: discord.Role,
-    log_channel: discord.TextChannel = None
-):
-    config["verify_role_id"] = role.id
-    if log_channel:
-        config["verify_log_channel_id"] = log_channel.id
-
-    embed = discord.Embed(
-        title="📌 ยืนยันตัวตน",
-        description="ยินดีต้อนรับเข้าสู่เซิร์ฟเวอร์! กรุณากดปุ่มด้านล่างเพื่อทำการยืนยันตัวตนและเริ่มใช้งานเซิร์ฟเวอร์ครับ",
-        color=discord.Color.green()
-    )
-    view = VerifyView()
-    await interaction.channel.send(embed=embed, view=view)
-    await interaction.response.send_message("สร้างปุ่มยืนยันตัวตนเรียบร้อยครับ!", ephemeral=True)
-
 # ==========================================
-# 6. Event Listeners
+# 7. Event Listeners
 # ==========================================
 @bot.event
 async def on_member_join(member):
@@ -370,7 +411,6 @@ async def on_member_join(member):
                 description=text, 
                 color=discord.Color.green()
             )
-            
             avatar_url = member.display_avatar.url
             embed.set_thumbnail(url=avatar_url)
             
