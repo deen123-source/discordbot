@@ -84,51 +84,58 @@ FFMPEG_OPTIONS = {
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
 def extract_spotify_queries(url):
-    """แปลง Spotify Track/Playlist/Album เป็น Search Queries (รองรับ URL ที่มี query string ?si=...)"""
+    """แปลง Spotify Track/Playlist/Album เป็น Search Queries"""
     queries = []
     
+    # 1. ดึงค่า Key จาก Environment
     client_id = os.getenv("SPOTIFY_CLIENT_ID")
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
     
     if not client_id or not client_secret:
-        print("Spotify API Error: Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET")
+        print(f"[Spotify API Error] Missing Keys! ID: {bool(client_id)}, Secret: {bool(client_secret)}")
         return queries
 
     try:
-        spotify_client = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-            client_id=client_id,
-            client_secret=client_secret
-        ))
+        # 2. เชื่อมต่อ Spotify Client
+        auth_manager = SpotifyClientCredentials(
+            client_id=client_id.strip(),
+            client_secret=client_secret.strip()
+        )
+        spotify_client = spotipy.Spotify(auth_manager=auth_manager)
 
-        clean_url = url.split('?')[0]
+        # 3. คลีน URL ตัด Query String เช่น ?si=... ออก
+        clean_url = url.split('?')[0].strip()
 
-        if "track" in clean_url:
-            match = re.search(r'track/([a-zA-Z0-9]+)', clean_url)
-            if match:
-                t = spotify_client.track(match.group(1))
-                queries.append(f"{t['name']} {t['artists'][0]['name']}")
+        # 4. ตรวจสอบ Track / Playlist / Album
+        if "/track/" in clean_url:
+            track_id = clean_url.split("/track/")[-1].split("/")[0]
+            t = spotify_client.track(track_id)
+            track_name = t['name']
+            artist_name = t['artists'][0]['name']
+            queries.append(f"{track_name} {artist_name}")
+            print(f"[Spotify Success] Found Track: {track_name} - {artist_name}")
                 
-        elif "playlist" in clean_url:
-            match = re.search(r'playlist/([a-zA-Z0-9]+)', clean_url)
-            if match:
-                res = spotify_client.playlist_tracks(match.group(1))
-                for item in res.get('items', []):
-                    t = item.get('track')
-                    if t:
-                        queries.append(f"{t['name']} {t['artists'][0]['name']}")
-                        
-        elif "album" in clean_url:
-            match = re.search(r'album/([a-zA-Z0-9]+)', clean_url)
-            if match:
-                res = spotify_client.album_tracks(match.group(1))
-                for t in res.get('items', []):
+        elif "/playlist/" in clean_url:
+            playlist_id = clean_url.split("/playlist/")[-1].split("/")[0]
+            res = spotify_client.playlist_tracks(playlist_id)
+            for item in res.get('items', []):
+                t = item.get('track')
+                if t:
                     queries.append(f"{t['name']} {t['artists'][0]['name']}")
+            print(f"[Spotify Success] Found Playlist with {len(queries)} tracks")
+                        
+        elif "/album/" in clean_url:
+            album_id = clean_url.split("/album/")[-1].split("/")[0]
+            res = spotify_client.album_tracks(album_id)
+            for t in res.get('items', []):
+                queries.append(f"{t['name']} {t['artists'][0]['name']}")
+            print(f"[Spotify Success] Found Album with {len(queries)} tracks")
 
     except Exception as e:
-        print(f"Error fetching Spotify data: {e}")
+        print(f"[Spotify API Error Exception]: {e}")
         
     return queries
-
+    
 def fetch_audio_info(query):
     """ค้นหาและดึง Stream URL ผ่าน yt-dlp"""
     try:
