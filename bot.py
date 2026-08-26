@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import asyncio
 import discord
@@ -10,10 +11,20 @@ import static_ffmpeg
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 
+# ==========================================
+# 0. บังคับ Encoding ให้เป็น UTF-8 (ป้องกัน ASCII Error)
+# ==========================================
+if sys.stdout.encoding.lower() != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 static_ffmpeg.add_paths()
 
 # ==========================================
-# 0. Keep-Alive Web Server สำหรับ Render
+# 0.1 Keep-Alive Web Server สำหรับ Render
 # ==========================================
 async def handle_health_check(request):
     return web.Response(text="Bot is running perfectly!")
@@ -428,8 +439,8 @@ async def slash_play(interaction: discord.Interaction, search: str):
             clean_url = query.split('?')[0]
             if "/track/" in clean_url:
                 track_info = sp.track(clean_url)
-                track_name = track_info['name']
-                artist_name = track_info['artists'][0]['name']
+                track_name = str(track_info['name'])
+                artist_name = str(track_info['artists'][0]['name'])
                 search_queries.append(f"{track_name} {artist_name}")
 
             elif "/playlist/" in clean_url:
@@ -438,16 +449,16 @@ async def slash_play(interaction: discord.Interaction, search: str):
                 for item in items:
                     track = item.get('track')
                     if track:
-                        t_name = track['name']
-                        a_name = track['artists'][0]['name']
+                        t_name = str(track['name'])
+                        a_name = str(track['artists'][0]['name'])
                         search_queries.append(f"{t_name} {a_name}")
 
             elif "/album/" in clean_url:
                 results = sp.album_tracks(clean_url)
                 items = results.get('items', [])
                 for track in items:
-                    t_name = track['name']
-                    a_name = track['artists'][0]['name']
+                    t_name = str(track['name'])
+                    a_name = str(track['artists'][0]['name'])
                     search_queries.append(f"{t_name} {a_name}")
         except Exception as e:
             await interaction.followup.send(f"ดึงข้อมูลจาก Spotify ไม่สำเร็จ: {e}")
