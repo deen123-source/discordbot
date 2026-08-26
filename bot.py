@@ -37,24 +37,22 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # ซิงค์ Slash Commands แบบ Global (ใช้งานได้ทุกเซิร์ฟเวอร์)
         await self.tree.sync()
         print("Sync Slash Commands เรียบร้อยแล้ว!")
 
 bot = MyBot()
 
 # ==========================================
-# 2. ตัวแปรตั้งค่าระบบต่างๆ (In-Memory Config)
+# 2. ตัวแปรตั้งค่าระบบต่างๆ
 # ==========================================
 config = {
-    "welcome_channel_id": None,   # ห้องแจ้งคนเข้า
-    "goodbye_channel_id": None,   # ห้องแจ้งคนออก
-    "welcome_message": "ยินดีต้อนรับคุณ {member} เข้าสู่เซิร์ฟเวอร์!",
+    "welcome_channel_id": None,
+    "goodbye_channel_id": None,
+    "welcome_message": "ยินดีต้อนรับ {member} !",
     "goodbye_message": "คุณ {member} ได้ออกจากเซิร์ฟเวอร์ไปแล้ว...",
     "welcome_image_url": "",
-    "verify_question": "กรุณาพิมพ์คำว่า 'agree' เพื่อยืนยันตัวตน:",
-    "verify_answer": "agree",
-    "verify_role_id": None
+    "verify_role_id": None,
+    "verify_log_channel_id": None
 }
 
 YTDL_OPTIONS = {
@@ -198,43 +196,76 @@ def get_player(interaction):
     return player
 
 # ==========================================
-# 4. ระบบยืนยันตัวตน (Verify Modal & Button)
+# 4. ระบบยืนยันตัวตนแบบกรอกฟอร์ม (Form Modal)
 # ==========================================
-class VerifyModal(discord.ui.Modal, title="ยืนยันตัวตน"):
-    answer_input = discord.ui.TextInput(
-        label="คำตอบสำหรับยืนยันตัวตน",
-        placeholder="กรอกคำตอบที่นี่...",
-        required=True
+class AdvancedVerifyModal(discord.ui.Modal, title="ยืนยันตัวตน"):
+    nickname = discord.ui.TextInput(
+        label="อยากแรกเลยนะ ชื่อเล่นชื่ออะไรหรออออ",
+        placeholder="กรอกชื่อเล่นตรงนี้นะ",
+        required=True,
+        max_length=50
+    )
+    age = discord.ui.TextInput(
+        label="อายุเท่าไหร่ยยย",
+        placeholder="ไม่อยากบอกก็ได้นะ :(",
+        required=False,
+        max_length=10
+    )
+    source = discord.ui.TextInput(
+        label="ได้ดิสจากไหนหรอจ้ะ",
+        placeholder="บอกหน่อยน้า",
+        required=True,
+        max_length=100
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        user_answer = self.answer_input.value.strip()
-        expected = config["verify_answer"].strip()
+        # 1. มอบยศให้สมาชิก
+        role_id = config["verify_role_id"]
+        if role_id:
+            role = interaction.guild.get_role(role_id)
+            if role:
+                await interaction.user.add_roles(role)
 
-        if user_answer.lower() == expected.lower():
-            role_id = config["verify_role_id"]
-            if role_id:
-                role = interaction.guild.get_role(role_id)
-                if role:
-                    await interaction.user.add_roles(role)
-                    await interaction.response.send_message("ยืนยันตัวตนสำเร็จ! มอบยศเรียบร้อยแล้วครับ 🎉", ephemeral=True)
-                    return
-            await interaction.response.send_message("ยืนยันตัวตนถูกต้องเรียบร้อยครับ!", ephemeral=True)
-        else:
-            await interaction.response.send_message("คำตอบไม่ถูกต้อง กรุณาลองใหม่อีกครั้งครับ!", ephemeral=True)
+        # 2. สร้าง Embed ส่งไปยังห้อง Log (ถ้ามีการตั้งค่าไว้)
+        log_ch_id = config["verify_log_channel_id"]
+        if log_ch_id:
+            log_channel = interaction.guild.get_channel(log_ch_id)
+            if log_channel:
+                embed = discord.Embed(
+                    description=f"{interaction.user.mention} ☑️ **ได้รับยศเรียบร้อยแล้ว**",
+                    color=discord.Color.from_rgb(47, 49, 54)
+                )
+                embed.set_thumbnail(url=interaction.user.display_avatar.url)
+                embed.add_field(
+                    name="ℹ️ อยากแรกเลยนะ ชื่อเล่นชื่ออะไรหรออออ:",
+                    value=f"└ {self.nickname.value}",
+                    inline=False
+                )
+                embed.add_field(
+                    name="ℹ️ อายุเท่าไหร่ยยย:",
+                    value=f"└ {self.age.value if self.age.value else 'ไม่ระบุ'}",
+                    inline=False
+                )
+                embed.add_field(
+                    name="ℹ️ ได้ดิสจากไหนหรอจ้ะ:",
+                    value=f"└ {self.source.value}",
+                    inline=False
+                )
+                embed.set_footer(text=f"ID: {interaction.user.id}")
+                await log_channel.send(content=f"{interaction.user.mention}", embed=embed)
+
+        await interaction.response.send_message("ยืนยันตัวตนเรียบร้อยแล้วครับ!", ephemeral=True)
 
 class VerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="คลิกเพื่อยืนยันตัวตน", style=discord.ButtonStyle.success, emoji="✅", custom_id="verify_button")
+    @discord.ui.button(label="ยืนยันตัวตน", style=discord.ButtonStyle.success, emoji="📌", custom_id="verify_button_custom")
     async def verify_button_click(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = VerifyModal()
-        modal.answer_input.label = config["verify_question"][:45]
-        await interaction.response.send_modal(modal)
+        await interaction.response.send_modal(AdvancedVerifyModal())
 
 # ==========================================
-# 5. Slash Commands (สั่งงานผ่าน / )
+# 5. Slash Commands
 # ==========================================
 @bot.tree.command(name="play", description="เปิดเพลงหรือเพิ่มเข้าคิว")
 @app_commands.describe(search="ชื่อเพลง หรือ Link จาก YouTube / SoundCloud")
@@ -276,9 +307,9 @@ async def slash_stop(interaction: discord.Interaction):
 @app_commands.describe(
     welcome_channel="ห้องสำหรับแจ้งคนเข้า",
     goodbye_channel="ห้องสำหรับแจ้งคนออก",
-    welcome_msg="ข้อความต้อนรับ (ใช้ {member} แทนการแท็กชื่อคนเข้า)",
-    goodbye_msg="ข้อความคนออก (ใช้ {member} แทนชื่อคนออก)",
-    image_url="URL รูปภาพวอลเปเปอร์หลัก (ถ้าไม่ใส่จะใช้รูปโปรไฟล์สมาชิก)"
+    welcome_msg="ข้อความต้อนรับ",
+    goodbye_msg="ข้อความคนออก",
+    image_url="URL รูปภาพวอลเปเปอร์หลัก"
 )
 async def slash_setup_welcome(
     interaction: discord.Interaction,
@@ -303,23 +334,21 @@ async def slash_setup_welcome(
 
 @bot.tree.command(name="setup_verify", description="สร้างปุ่มและตั้งค่าระบบยืนยันตัวตน")
 @app_commands.describe(
-    question="คำถามยืนยันตัวตน",
-    answer="คำตอบที่ถูกต้อง",
-    role="ยศที่จะให้หลังจากยืนยันสำเร็จ"
+    role="ยศที่จะมอบให้เมื่อยืนยันสำเร็จ",
+    log_channel="ห้องสำหรับส่งบันทึกข้อมูลคนที่ยืนยันสำเร็จ"
 )
 async def slash_setup_verify(
     interaction: discord.Interaction,
-    question: str,
-    answer: str,
-    role: discord.Role
+    role: discord.Role,
+    log_channel: discord.TextChannel = None
 ):
-    config["verify_question"] = question
-    config["verify_answer"] = answer
     config["verify_role_id"] = role.id
+    if log_channel:
+        config["verify_log_channel_id"] = log_channel.id
 
     embed = discord.Embed(
-        title="🔒 ระบบยืนยันตัวตน (Verification)",
-        description=f"กรุณากดปุ่มด้านล่างเพื่อทำการตอบคำถามและรับยศ **{role.name}**",
+        title="📌 ยืนยันตัวตน",
+        description="ยินดีต้อนรับเข้าสู่เซิร์ฟเวอร์! กรุณากดปุ่มด้านล่างเพื่อทำการยืนยันตัวตนและเริ่มใช้งานเซิร์ฟเวอร์ครับ",
         color=discord.Color.green()
     )
     view = VerifyView()
@@ -327,7 +356,7 @@ async def slash_setup_verify(
     await interaction.response.send_message("สร้างปุ่มยืนยันตัวตนเรียบร้อยครับ!", ephemeral=True)
 
 # ==========================================
-# 6. Event Listeners (คนเข้า/ออก)
+# 6. Event Listeners
 # ==========================================
 @bot.event
 async def on_member_join(member):
