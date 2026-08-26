@@ -28,22 +28,9 @@ async def start_dummy_web_server():
     await site.start()
 
 # ==========================================
-# 1. ตั้งค่า API Tokens & Client Options
+# 1. ตั้งค่า Bot Client
 # ==========================================
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_ของคุณ")
-SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "ใส่_SPOTIFY_CLIENT_ID_ของคุณ")
-SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "ใส่_SPOTIFY_CLIENT_SECRET_ของคุณ")
-
-# ตั้งค่า Spotipy Client
-sp = None
-if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
-    try:
-        sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-            client_id=SPOTIFY_CLIENT_ID,
-            client_secret=SPOTIFY_CLIENT_SECRET
-        ))
-    except Exception as e:
-        print(f"Spotify API Init Error: {e}")
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -97,31 +84,46 @@ FFMPEG_OPTIONS = {
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
 def extract_spotify_queries(url):
-    """แปลง Spotify Track/Playlist/Album เป็น Search Queries"""
+    """แปลง Spotify Track/Playlist/Album เป็น Search Queries (รองรับ URL ที่มี query string ?si=...)"""
     queries = []
-    if not sp:
-        return queries
     
+    client_id = os.getenv("SPOTIFY_CLIENT_ID")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        print("Spotify API Error: Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET")
+        return queries
+
     try:
-        if "track" in url:
-            match = re.search(r'track/([a-zA-Z0-9]+)', url)
+        spotify_client = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+            client_id=client_id,
+            client_secret=client_secret
+        ))
+
+        clean_url = url.split('?')[0]
+
+        if "track" in clean_url:
+            match = re.search(r'track/([a-zA-Z0-9]+)', clean_url)
             if match:
-                t = sp.track(match.group(1))
+                t = spotify_client.track(match.group(1))
                 queries.append(f"{t['name']} {t['artists'][0]['name']}")
-        elif "playlist" in url:
-            match = re.search(r'playlist/([a-zA-Z0-9]+)', url)
+                
+        elif "playlist" in clean_url:
+            match = re.search(r'playlist/([a-zA-Z0-9]+)', clean_url)
             if match:
-                res = sp.playlist_tracks(match.group(1))
+                res = spotify_client.playlist_tracks(match.group(1))
                 for item in res.get('items', []):
                     t = item.get('track')
                     if t:
                         queries.append(f"{t['name']} {t['artists'][0]['name']}")
-        elif "album" in url:
-            match = re.search(r'album/([a-zA-Z0-9]+)', url)
+                        
+        elif "album" in clean_url:
+            match = re.search(r'album/([a-zA-Z0-9]+)', clean_url)
             if match:
-                res = sp.album_tracks(match.group(1))
+                res = spotify_client.album_tracks(match.group(1))
                 for t in res.get('items', []):
                     queries.append(f"{t['name']} {t['artists'][0]['name']}")
+
     except Exception as e:
         print(f"Error fetching Spotify data: {e}")
         
@@ -463,7 +465,7 @@ async def slash_play(interaction: discord.Interaction, search: str):
     if "spotify.com" in search:
         queries = await bot.loop.run_in_executor(None, lambda: extract_spotify_queries(search))
         if not queries:
-            await interaction.followup.send("ไม่สามารถดึงข้อมูลจาก Spotify ได้ กรุณาตรวจสอบ Client ID หรือ ลิงก์ครับ")
+            await interaction.followup.send("ไม่สามารถดึงข้อมูลจาก Spotify ได้ กรุณาตรวจสอบ Client ID / Client Secret หรือ ลิงก์ครับ")
             return
         
         await interaction.followup.send(f"กำลังประมวลผลเพลงจาก Spotify จำนวน {len(queries)} เพลง เข้าสู่คิว...")
@@ -485,7 +487,7 @@ async def slash_play(interaction: discord.Interaction, search: str):
             info = await bot.loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
             
             # กรณีเป็น YouTube Playlist
-            if 'entries' in info:
+            if 'entries' in info and info['entries']:
                 entries = info['entries']
                 await interaction.followup.send(f"กำลังเพิ่ม Playlist YouTube จำนวน {len(entries)} เพลงเข้าคิว...")
                 for entry in entries:
@@ -497,7 +499,8 @@ async def slash_play(interaction: discord.Interaction, search: str):
                 await interaction.channel.send(f"เพิ่ม Playlist จำนวน {len(entries)} เพลง เรียบร้อยแล้ว!")
             else:
                 # เพลงเดี่ยว
-                data = {'url': info['url'], 'title': info.get('title', 'Unknown Title')}
+                video = info['entries'][0] if 'entries' in info and len(info['entries']) > 0 else info
+                data = {'url': video['url'], 'title': video.get('title', 'Unknown Title')}
                 await player.queue.put(data)
                 await interaction.followup.send(f"เพิ่มเพลง **{data['title']}** เข้าคิวเรียบร้อยครับ!")
                 if player.current:
