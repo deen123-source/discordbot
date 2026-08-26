@@ -54,7 +54,13 @@ config = {
     "verify_title": "📌 ยืนยันตัวตน",
     "verify_desc": "ยินดีต้อนรับเข้าสู่เซิร์ฟเวอร์! กรุณากดปุ่มด้านล่างเพื่อทำการยืนยันตัวตนและรับยศครับ",
     "verify_role_id": None,
-    "verify_log_channel_id": None
+    "verify_log_channel_id": None,
+    # คำถามสำหรับฟอร์มยืนยันตัวตน (ตั้งค่าเริ่มต้นไว้ 3 ข้อ)
+    "verify_questions": [
+        {"label": "อยากแรกเลยนะ ชื่อเล่นชื่ออะไรหรออออ", "placeholder": "กรอกชื่อเล่นตรงนี้นะ", "required": True},
+        {"label": "อายุเท่าไหร่ยยย", "placeholder": "ไม่อยากบอกก็ได้นะ :(", "required": False},
+        {"label": "ได้ดิสจากไหนหรอจ้ะ", "placeholder": "บอกหน่อยน้า", "required": True}
+    ]
 }
 
 YTDL_OPTIONS = {
@@ -198,35 +204,32 @@ def get_player(interaction):
     return player
 
 # ==========================================
-# 4. ระบบยืนยันตัวตนแบบกรอกฟอร์ม (Form Modal)
+# 4. ระบบยืนยันตัวตนแบบ Dynamic Modal
 # ==========================================
-class AdvancedVerifyModal(discord.ui.Modal, title="ยืนยันตัวตน"):
-    nickname = discord.ui.TextInput(
-        label="อยากแรกเลยนะ ชื่อเล่นชื่ออะไรหรออออ",
-        placeholder="กรอกชื่อเล่นตรงนี้นะ",
-        required=True,
-        max_length=50
-    )
-    age = discord.ui.TextInput(
-        label="อายุเท่าไหร่ยยย",
-        placeholder="ไม่อยากบอกก็ได้นะ :(",
-        required=False,
-        max_length=10
-    )
-    source = discord.ui.TextInput(
-        label="ได้ดิสจากไหนหรอจ้ะ",
-        placeholder="บอกหน่อยน้า",
-        required=True,
-        max_length=100
-    )
+class DynamicVerifyModal(discord.ui.Modal, title="ยืนยันตัวตน"):
+    def __init__(self):
+        super().__init__()
+        self.inputs = []
+        # ดึงคำถามจาก config มาสร้าง TextInput แบบ Dynamic (สูงสุด 5 คำถาม)
+        for q in config["verify_questions"]:
+            text_input = discord.ui.TextInput(
+                label=q["label"][:45],
+                placeholder=q.get("placeholder", "")[:100],
+                required=q.get("required", True),
+                max_length=150
+            )
+            self.inputs.append(text_input)
+            self.add_item(text_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # 1. แจกยศ
         role_id = config["verify_role_id"]
         if role_id:
             role = interaction.guild.get_role(role_id)
             if role:
                 await interaction.user.add_roles(role)
 
+        # 2. ส่งข้อมูลไปห้อง Log
         log_ch_id = config["verify_log_channel_id"]
         if log_ch_id:
             log_channel = interaction.guild.get_channel(log_ch_id)
@@ -236,21 +239,14 @@ class AdvancedVerifyModal(discord.ui.Modal, title="ยืนยันตัว�
                     color=discord.Color.from_rgb(47, 49, 54)
                 )
                 embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                embed.add_field(
-                    name="ℹ️ อยากแรกเลยนะ ชื่อเล่นชื่ออะไรหรออออ:",
-                    value=f"└ {self.nickname.value}",
-                    inline=False
-                )
-                embed.add_field(
-                    name="ℹ️ อายุเท่าไหร่ยยย:",
-                    value=f"└ {self.age.value if self.age.value else 'ไม่ระบุ'}",
-                    inline=False
-                )
-                embed.add_field(
-                    name="ℹ️ ได้ดิสจากไหนหรอจ้ะ:",
-                    value=f"└ {self.source.value}",
-                    inline=False
-                )
+                
+                for item in self.inputs:
+                    val = item.value.strip() if item.value else "ไม่ระบุ"
+                    embed.add_field(
+                        name=f"ℹ️ {item.label}:",
+                        value=f"└ {val}",
+                        inline=False
+                    )
                 embed.set_footer(text=f"ID: {interaction.user.id}")
                 await log_channel.send(content=f"{interaction.user.mention}", embed=embed)
 
@@ -260,13 +256,39 @@ class VerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="ยืนยันตัวตน", style=discord.ButtonStyle.success, emoji="📌", custom_id="verify_button_custom_v2")
+    @discord.ui.button(label="ยืนยันตัวตน", style=discord.ButtonStyle.success, emoji="📌", custom_id="dynamic_verify_btn_v3")
     async def verify_button_click(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AdvancedVerifyModal())
+        await interaction.response.send_modal(DynamicVerifyModal())
 
 # ==========================================
-# 5. CONTROL PANEL ระบบตั้งค่าบอทผ่าน UI
+# 5. CONTROL PANEL & Modals สำหรับปรับแต่ง
 # ==========================================
+class EditVerifyQuestionsModal(discord.ui.Modal, title="ตั้งค่าคำถามยืนยันตัวตน (สูงสุด 5 ข้อ)"):
+    q1 = discord.ui.TextInput(label="คำถามข้อที่ 1", default=config["verify_questions"][0]["label"] if len(config["verify_questions"]) > 0 else "", required=True)
+    q2 = discord.ui.TextInput(label="คำถามข้อที่ 2 (เว้นว่างได้)", default=config["verify_questions"][1]["label"] if len(config["verify_questions"]) > 1 else "", required=False)
+    q3 = discord.ui.TextInput(label="คำถามข้อที่ 3 (เว้นว่างได้)", default=config["verify_questions"][2]["label"] if len(config["verify_questions"]) > 2 else "", required=False)
+    q4 = discord.ui.TextInput(label="คำถามข้อที่ 4 (เว้นว่างได้)", default=config["verify_questions"][3]["label"] if len(config["verify_questions"]) > 3 else "", required=False)
+    q5 = discord.ui.TextInput(label="คำถามข้อที่ 5 (เว้นว่างได้)", default=config["verify_questions"][4]["label"] if len(config["verify_questions"]) > 4 else "", required=False)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        new_questions = []
+        raw_inputs = [self.q1.value, self.q2.value, self.q3.value, self.q4.value, self.q5.value]
+        
+        for text in raw_inputs:
+            if text and text.strip():
+                new_questions.append({
+                    "label": text.strip(),
+                    "placeholder": "กรอกข้อมูล...",
+                    "required": True
+                })
+        
+        if not new_questions:
+            await interaction.response.send_message("ต้องมีคำถามอย่างน้อย 1 ข้อครับ!", ephemeral=True)
+            return
+
+        config["verify_questions"] = new_questions
+        await interaction.response.send_message(f"อัปเดตคำถามยืนยันตัวตนจำนวน {len(new_questions)} ข้อเรียบร้อยแล้ว!", ephemeral=True)
+
 class EditVerifyEmbedModal(discord.ui.Modal, title="แต่งข้อความ Embed ยืนยันตัวตน"):
     title_input = discord.ui.TextInput(label="หัวข้อ (Title)", default=config["verify_title"], required=True)
     desc_input = discord.ui.TextInput(label="รายละเอียด (Description)", default=config["verify_desc"], style=discord.TextStyle.paragraph, required=True)
@@ -330,15 +352,19 @@ class MasterControlPanel(discord.ui.View):
         config["goodbye_channel_id"] = select.values[0].id
         await interaction.response.send_message(f"ตั้งค่าห้องแจ้งคนออกเป็น {select.values[0].mention} เรียบร้อย!", ephemeral=True)
 
-    @discord.ui.button(label="แต่งข้อความปุ่มยืนยัน", style=discord.ButtonStyle.primary, emoji="✏️", row=4)
+    @discord.ui.button(label="📝 แก้ไข/เพิ่มคำถาม", style=discord.ButtonStyle.secondary, emoji="❓", row=4)
+    async def edit_questions(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EditVerifyQuestionsModal())
+
+    @discord.ui.button(label="✏️ แต่ง Embed ยืนยัน", style=discord.ButtonStyle.primary, emoji="🎨", row=4)
     async def edit_verify_text(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditVerifyEmbedModal())
 
-    @discord.ui.button(label="แต่งข้อความต้อนรับ/คนออก", style=discord.ButtonStyle.primary, emoji="🖼️", row=4)
+    @discord.ui.button(label="🖼️ แต่งข้อความคนเข้า/ออก", style=discord.ButtonStyle.primary, emoji="👋", row=4)
     async def edit_welcome_text(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditWelcomeModal())
 
-    @discord.ui.button(label="🚀 ส่งปุ่มยืนยันตัวตนลงห้องนี้", style=discord.ButtonStyle.success, emoji="✅", row=4)
+    @discord.ui.button(label="🚀 ส่งปุ่มยืนยันตัวตน", style=discord.ButtonStyle.success, emoji="✅", row=4)
     async def spawn_verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
             title=config["verify_title"],
@@ -355,7 +381,7 @@ class MasterControlPanel(discord.ui.View):
 async def slash_setup_panel(interaction: discord.Interaction):
     embed = discord.Embed(
         title="⚙️ Master Control Panel - แผงควบคุมบอท",
-        description="ใช้เมนูด้านล่างนี้เพื่อตั้งค่าห้อง ยศ และปรับแต่งข้อความต่าง ๆ ได้เลยครับ",
+        description="ใช้เมนูด้านล่างเพื่อปรับแต่งคำถาม ห้อง และยศได้เลยครับ",
         color=discord.Color.purple()
     )
     await interaction.response.send_message(embed=embed, view=MasterControlPanel(), ephemeral=True)
@@ -440,7 +466,10 @@ async def on_member_remove(member):
 async def on_ready():
     print(f"ล็อกอินเรียบร้อย! บอท {bot.user.name} พร้อมใช้งานแล้ว!")
     bot.add_view(VerifyView())
+
+async def main():
     await start_dummy_web_server()
+    await bot.start(DISCORD_BOT_TOKEN)
 
 if __name__ == "__main__":
-    bot.run(DISCORD_BOT_TOKEN)
+    asyncio.run(main())
