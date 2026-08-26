@@ -64,7 +64,7 @@ config = {
 }
 
 # ==========================================
-# 3. Audio Extraction Helper Functions (yt-dlp Only)
+# 3. Audio Extraction Helper Functions (yt-dlp)
 # ==========================================
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
@@ -80,19 +80,6 @@ FFMPEG_OPTIONS = {
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
-
-def fetch_audio_info(query):
-    """ค้นหาเพลงและดึง Stream URL ผ่าน yt-dlp โดยตรง"""
-    try:
-        info = ytdl.extract_info(query, download=False)
-        if 'entries' in info and len(info['entries']) > 0:
-            video = info['entries'][0]
-        else:
-            video = info
-        return {'url': video['url'], 'title': video.get('title', 'Unknown Track')}
-    except Exception as e:
-        print(f"yt-dlp error for query '{query}': {e}")
-        return None
 
 # ==========================================
 # 4. Music Player & Controller
@@ -402,9 +389,6 @@ async def slash_setup_panel(interaction: discord.Interaction):
 @bot.tree.command(name="play", description="เปิดเพลงจาก YouTube หรือ Spotify (หรือค้นหาด้วยชื่อเพลง)")
 @app_commands.describe(search="ชื่อเพลง, ลิงก์ YouTube หรือ ลิงก์ Spotify")
 async def slash_play(interaction: discord.Interaction, search: str):
-    if not interaction.user.user if hasattr(interaction.user, 'voice') else None:
-        pass
-        
     if not interaction.user.voice:
         await interaction.response.send_message("ดีนต้องเข้าห้องเสียงก่อนสั่งเปิดเพลงนะ!", ephemeral=True)
         return
@@ -417,21 +401,17 @@ async def slash_play(interaction: discord.Interaction, search: str):
     player = get_player(interaction)
     query = search.strip()
 
-    # ตรวจจับถ้าผู้ใช้ส่งลิงก์ Spotify มา ให้แปลงเป็นคำค้นหาบน YouTube
+    # แปลงลิงก์ Spotify หรือข้อความธรรมดา ให้กลายเป็นคำค้นหาบน YouTube
     if "spotify.com" in query:
-        # ตัด Query String เช่น ?si=... ออก
         clean_url = query.split('?')[0]
-        # สกัดชื่อเพลงจาก URL Spotify (เช่น spotify.com/track/ID/song-title หรือแกะ slug)
         parts = [p for p in clean_url.split('/') if p]
         
         if len(parts) >= 2 and parts[-2] == "track":
-            # เอา ID หรือส่วนท้ายมาค้นหา
             track_identifier = parts[-1].replace('-', ' ')
             query = f"ytsearch:{track_identifier} song"
         else:
             query = f"ytsearch:{query}"
     elif not query.startswith("http://") and not query.startswith("https://"):
-        # ถ้าเป็นคำค้นหาปกติ (ไม่ใช่ URL) ให้ค้นบน YouTube
         query = f"ytsearch:{query}"
 
     try:
@@ -441,9 +421,8 @@ async def slash_play(interaction: discord.Interaction, search: str):
             await interaction.followup.send("ไม่พบข้อมูลเพลงนี้ครับ ลองเปลี่ยนคำค้นหาดูนะ!")
             return
 
-        # กรณีเป็น Playlist
+        # กรณีเป็น Playlist หรือผลลัพธ์การค้นหา
         if 'entries' in info and info['entries']:
-            # ถ้ามาจาก ytsearch ค้นหาปกติ ให้เอาเฉพาะผลลัพธ์แรก
             if query.startswith("ytsearch:"):
                 video = info['entries'][0]
                 data = {'url': video['url'], 'title': video.get('title', 'Unknown Title')}
