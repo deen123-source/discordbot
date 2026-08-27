@@ -72,7 +72,6 @@ class MyBot(commands.Bot):
         await self.tree.sync()
         print("Sync Slash Commands เรียบร้อยแล้ว!")
 
-# 📌 ประกาศตัวแปร bot ตรงนี้ก่อนเรียกใช้งาน decorator ด้านล่าง
 bot = MyBot()
 
 # ==========================================
@@ -108,6 +107,14 @@ YTDL_OPTIONS = {
     'nocheckcertificate': True,
     'ignoreerrors': True,
     'geo_bypass': True,
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android', 'web']
+        }
+    },
+    'headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    }
 }
 
 FFMPEG_OPTIONS = {
@@ -504,7 +511,7 @@ async def slash_play(interaction: discord.Interaction, search: str):
         try:
             info = await asyncio.wait_for(
                 bot.loop.run_in_executor(None, extract_yt_info, item_query),
-                timeout=10.0
+                timeout=15.0
             )
         except asyncio.TimeoutError:
             continue
