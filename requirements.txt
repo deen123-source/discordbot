@@ -1,6 +1,6 @@
-discord.py[voice]
-PyNaCl
 yt-dlp
+yt-dlp-get-pot
+discord.py
 spotipy
 static-ffmpeg
 aiohttp
