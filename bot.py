@@ -455,12 +455,13 @@ def extract_yt_info(search_term):
 @bot.tree.command(name="play", description="เปิดเพลงจาก YouTube หรือ Spotify (หรือค้นหาด้วยชื่อเพลง)")
 @app_commands.describe(search="ชื่อเพลง, ลิงก์ YouTube หรือ ลิงก์ Spotify")
 async def slash_play(interaction: discord.Interaction, search: str):
-    if not interaction.user.voice:
-        await interaction.response.send_message("ดีนต้องเข้าห้องเสียงก่อนสั่งเปิดเพลงนะ!", ephemeral=True)
-        return
-
-    # ตอบกลับก่อนทันทีกัน Timeout 3 วินาทีของ Discord
+    # 1. เลื่อนเวลาตอบกลับทันที (defer) ก่อนทำอย่างอื่น เพื่อป้องกัน Interaction Timeout 3 วินาที
     await interaction.response.defer()
+
+    # 2. ตรวจสอบว่าผู้ใช้อยู่ในห้องเสียงหรือไม่ (ใช้ followup แทน response)
+    if not interaction.user.voice:
+        await interaction.followup.send("ดีนต้องเข้าห้องเสียงก่อนสั่งเปิดเพลงนะ!", ephemeral=True)
+        return
 
     if interaction.guild.voice_client is None:
         await interaction.user.voice.channel.connect()
@@ -469,7 +470,7 @@ async def slash_play(interaction: discord.Interaction, search: str):
     query = search.strip()
     search_queries = []
 
-    # --- 1. ดึงข้อมูล Spotify ผ่าน Executor ---
+    # --- ดึงข้อมูลเพลงแบบ Async ใน Executor ---
     if "open.spotify.com" in query:
         if not sp:
             await interaction.followup.send("กรุณาตั้งค่า SPOTIPY_CLIENT_ID และ SPOTIPY_CLIENT_SECRET บน Render ก่อนครับ!")
@@ -477,11 +478,9 @@ async def slash_play(interaction: discord.Interaction, search: str):
         
         try:
             search_queries = await bot.loop.run_in_executor(None, get_spotify_tracks, query)
-        except Exception as e:
+        except Exception:
             await interaction.followup.send("ไม่สามารถอ่านข้อมูล Spotify ลิงก์นี้ได้ครับ!")
             return
-    elif not query.startswith("http://") and not query.startswith("https://"):
-        search_queries.append(query)
     else:
         search_queries.append(query)
 
@@ -489,7 +488,7 @@ async def slash_play(interaction: discord.Interaction, search: str):
         await interaction.followup.send("ไม่พบรายการเพลงที่ต้องการค้นหาครับ!")
         return
 
-    # --- 2. ค้นหาบน YouTube แบบ Non-blocking ---
+    # --- ค้นหา YouTube ---
     added_count = 0
     first_title = ""
 
@@ -520,11 +519,11 @@ async def slash_play(interaction: discord.Interaction, search: str):
     elif added_count > 1:
         await interaction.followup.send(f"เพิ่มเพลงเข้าคิวทั้งหมด **{added_count}** เพลงเรียบร้อยครับ!")
     else:
-        await interaction.followup.send("ไม่สามารถดึงข้อมูลเพลงจาก YouTube ได้เลยครับ (อาจถูกบล็อก IP หรือลิงก์ไม่อนุญาต)")
+        await interaction.followup.send("ไม่สามารถดึงข้อมูลเพลงจาก YouTube ได้เลยครับ")
 
     if player.current:
         await player.update_panel()
-
+        
 @bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้ออกจากห้องเสียง")
 async def slash_stop(interaction: discord.Interaction):
     if interaction.guild.id in players:
