@@ -3,3 +3,4 @@ spotipy
 discord.py
 static-ffmpeg
 aiohttp
+pynacl
