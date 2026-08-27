@@ -46,8 +46,8 @@ async def start_dummy_web_server():
 # ==========================================
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "ใส่_DISCORD_BOT_TOKEN_ของคุณ")
 
-SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID", "ใส่_SPOTIFY_CLIENT_ID")
-SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "ใส่_SPOTIFY_CLIENT_SECRET")
+SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID", "")
+SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "")
 
 sp = None
 if SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET:
@@ -68,6 +68,7 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
+        print("กำลัง Sync Commands...")
         await self.tree.sync()
         print("Sync Slash Commands เรียบร้อยแล้ว!")
 
@@ -94,7 +95,7 @@ config = {
 }
 
 # ==========================================
-# 3. Audio Extraction Helper Functions (yt-dlp โหมดค้นหาเร็ว)
+# 3. Audio Extraction Helper Functions
 # ==========================================
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
@@ -106,7 +107,6 @@ YTDL_OPTIONS = {
     'nocheckcertificate': True,
     'ignoreerrors': True,
     'geo_bypass': True,
-    'extract_flat': False
 }
 
 FFMPEG_OPTIONS = {
@@ -297,7 +297,7 @@ class VerifyView(discord.ui.View):
         await interaction.response.send_modal(DynamicVerifyModal())
 
 # ==========================================
-# 6. Master Control Panel (บอร์ดตั้งค่าระบบ)
+# 6. Master Control Panel
 # ==========================================
 class EditVerifyQuestionsModal(discord.ui.Modal, title="ตั้งค่าคำถามยืนยันตัวตน (สูงสุด 5 ข้อ)"):
     q1 = discord.ui.TextInput(label="คำถามข้อที่ 1", default=config["verify_questions"][0]["label"] if len(config["verify_questions"]) > 0 else "", required=True)
@@ -422,64 +422,71 @@ async def slash_setup_panel(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, view=MasterControlPanel(), ephemeral=True)
 
-# ฟังก์ชันดึงข้อมูล Spotify แบบ Asynchronous (ไม่บล็อกบอท)
 def get_spotify_tracks(query):
     if not sp:
         return []
     clean_url = query.split('?')[0]
     queries = []
-    if "/track/" in clean_url:
-        t = sp.track(clean_url)
-        queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
-    elif "/playlist/" in clean_url:
-        res = sp.playlist_items(clean_url, limit=20)  # จำกัดครั้งละไม่เกิน 20 เพลงป้องกันค้าง
-        for item in res.get('items', []):
-            t = item.get('track')
-            if t:
-                queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
-    elif "/album/" in clean_url:
-        res = sp.album_tracks(clean_url, limit=20)
-        for t in res.get('items', []):
-            if t:
-                queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
+    try:
+        if "/track/" in clean_url:
+            t = sp.track(clean_url)
+            queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
+        elif "/playlist/" in clean_url:
+            res = sp.playlist_items(clean_url, limit=10)
+            for item in res.get('items', []):
+                t = item.get('track')
+                if t:
+                    queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
+        elif "/album/" in clean_url:
+            res = sp.album_tracks(clean_url, limit=10)
+            for t in res.get('items', []):
+                if t:
+                    queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
+    except Exception as e:
+        print(f"Spotify Error: {e}")
     return queries
 
-# ฟังก์ชันค้นหา YouTube แบบ Asynchronous (ไม่บล็อกบอท)
 def extract_yt_info(search_term):
     yt_query = search_term if search_term.startswith("http") else f"ytsearch1:{search_term}"
     try:
         return ytdl.extract_info(yt_query, download=False)
-    except Exception:
+    except Exception as e:
+        print(f"yt-dlp Error: {e}")
         return None
 
-@bot.tree.command(name="play", description="เปิดเพลงจาก YouTube หรือ Spotify (หรือค้นหาด้วยชื่อเพลง)")
+@bot.tree.command(name="play", description="เปิดเพลงจาก YouTube หรือ Spotify")
 @app_commands.describe(search="ชื่อเพลง, ลิงก์ YouTube หรือ ลิงก์ Spotify")
 async def slash_play(interaction: discord.Interaction, search: str):
-    # 1. เลื่อนเวลาตอบกลับทันที (defer) ก่อนทำอย่างอื่น เพื่อป้องกัน Interaction Timeout 3 วินาที
+    # 🔴 บังคับ DEFER ทันทีตรงบรรทัดแรกสุด ป้องกัน Timeout
     await interaction.response.defer()
 
-    # 2. ตรวจสอบว่าผู้ใช้อยู่ในห้องเสียงหรือไม่ (ใช้ followup แทน response)
     if not interaction.user.voice:
         await interaction.followup.send("ดีนต้องเข้าห้องเสียงก่อนสั่งเปิดเพลงนะ!", ephemeral=True)
         return
 
     if interaction.guild.voice_client is None:
-        await interaction.user.voice.channel.connect()
+        try:
+            await interaction.user.voice.channel.connect()
+        except Exception as e:
+            await interaction.followup.send(f"เข้าห้องเสียงไม่ได้: {e}")
+            return
 
     player = get_player(interaction)
     query = search.strip()
     search_queries = []
 
-    # --- ดึงข้อมูลเพลงแบบ Async ใน Executor ---
     if "open.spotify.com" in query:
         if not sp:
-            await interaction.followup.send("กรุณาตั้งค่า SPOTIPY_CLIENT_ID และ SPOTIPY_CLIENT_SECRET บน Render ก่อนครับ!")
+            await interaction.followup.send("ยังไม่ได้ตั้งค่า SPOTIPY_CLIENT_ID และ SPOTIPY_CLIENT_SECRET บน Server ครับ!")
             return
         
         try:
-            search_queries = await bot.loop.run_in_executor(None, get_spotify_tracks, query)
-        except Exception:
-            await interaction.followup.send("ไม่สามารถอ่านข้อมูล Spotify ลิงก์นี้ได้ครับ!")
+            search_queries = await asyncio.wait_for(
+                bot.loop.run_in_executor(None, get_spotify_tracks, query),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send("ดึงข้อมูล Spotify นานเกินไป กรุณาลองใหม่อีกครั้งครับ")
             return
     else:
         search_queries.append(query)
@@ -488,12 +495,18 @@ async def slash_play(interaction: discord.Interaction, search: str):
         await interaction.followup.send("ไม่พบรายการเพลงที่ต้องการค้นหาครับ!")
         return
 
-    # --- ค้นหา YouTube ---
     added_count = 0
     first_title = ""
 
     for item_query in search_queries:
-        info = await bot.loop.run_in_executor(None, extract_yt_info, item_query)
+        try:
+            info = await asyncio.wait_for(
+                bot.loop.run_in_executor(None, extract_yt_info, item_query),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            continue
+
         if not info:
             continue
 
@@ -519,11 +532,11 @@ async def slash_play(interaction: discord.Interaction, search: str):
     elif added_count > 1:
         await interaction.followup.send(f"เพิ่มเพลงเข้าคิวทั้งหมด **{added_count}** เพลงเรียบร้อยครับ!")
     else:
-        await interaction.followup.send("ไม่สามารถดึงข้อมูลเพลงจาก YouTube ได้เลยครับ")
+        await interaction.followup.send("ไม่สามารถค้นหา/ดึงเพลงจาก YouTube ได้ครับ (อาจติด ลิขสิทธิ์ หรือ บล็อก IP)")
 
     if player.current:
         await player.update_panel()
-        
+
 @bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้ออกจากห้องเสียง")
 async def slash_stop(interaction: discord.Interaction):
     if interaction.guild.id in players:
@@ -535,7 +548,7 @@ async def slash_stop(interaction: discord.Interaction):
         await interaction.response.send_message("บอทไม่ได้อยู่ในห้องเสียงครับ", ephemeral=True)
 
 # ==========================================
-# 8. Event Listeners (ระบบคนเข้า/ออก)
+# 8. Event Listeners
 # ==========================================
 @bot.event
 async def on_member_join(member):
