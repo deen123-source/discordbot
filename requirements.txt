@@ -1,6 +1,6 @@
-yt-dlp>=2024.08.01
+discord.py[voice]
+PyNaCl
+yt-dlp
 spotipy
-discord.py
 static-ffmpeg
 aiohttp
-pynacl
