@@ -1,5 +1,5 @@
-discord.py
-pynacl
+discord.py[voice]
+davey
 yt-dlp
 yt-dlp-get-pot
 spotipy
