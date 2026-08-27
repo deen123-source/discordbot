@@ -69,8 +69,11 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         print("กำลัง Sync Commands...")
-        await self.tree.sync()
-        print("Sync Slash Commands เรียบร้อยแล้ว!")
+        try:
+            synced = await self.tree.sync()
+            print(f"Sync Slash Commands เรียบร้อยแล้ว! (จำนวน {len(synced)} คำสั่ง)")
+        except Exception as e:
+            print(f"Sync Commands Error: {e}")
 
 bot = MyBot()
 
@@ -109,11 +112,12 @@ YTDL_OPTIONS = {
     'geo_bypass': True,
     'extractor_args': {
         'youtube': {
-            'player_client': ['ios', 'android', 'mweb']
+            'player_client': ['android', 'ios', 'mweb'],
+            'skip': ['hls', 'dash']
         }
     },
     'headers': {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 }
 
@@ -126,6 +130,38 @@ FFMPEG_OPTIONS = {
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+
+def get_spotify_tracks(query):
+    if not sp:
+        return []
+    clean_url = query.split('?')[0]
+    queries = []
+    try:
+        if "/track/" in clean_url:
+            t = sp.track(clean_url)
+            queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
+        elif "/playlist/" in clean_url:
+            res = sp.playlist_items(clean_url, limit=10)
+            for item in res.get('items', []):
+                t = item.get('track')
+                if t:
+                    queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
+        elif "/album/" in clean_url:
+            res = sp.album_tracks(clean_url, limit=10)
+            for t in res.get('items', []):
+                if t:
+                    queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
+    except Exception as e:
+        print(f"Spotify Error: {e}")
+    return queries
+
+def extract_yt_info(search_term):
+    yt_query = search_term if search_term.startswith("http") else f"ytsearch1:{search_term}"
+    try:
+        return ytdl.extract_info(yt_query, download=False)
+    except Exception as e:
+        print(f"[ERROR] yt-dlp Failed for '{search_term}': {e}")
+        return None
 
 # ==========================================
 # 4. Music Player & Controller
@@ -433,38 +469,6 @@ async def slash_setup_panel(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, view=MasterControlPanel(), ephemeral=True)
 
-def get_spotify_tracks(query):
-    if not sp:
-        return []
-    clean_url = query.split('?')[0]
-    queries = []
-    try:
-        if "/track/" in clean_url:
-            t = sp.track(clean_url)
-            queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
-        elif "/playlist/" in clean_url:
-            res = sp.playlist_items(clean_url, limit=10)
-            for item in res.get('items', []):
-                t = item.get('track')
-                if t:
-                    queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
-        elif "/album/" in clean_url:
-            res = sp.album_tracks(clean_url, limit=10)
-            for t in res.get('items', []):
-                if t:
-                    queries.append(f"{t.get('name', '')} {t['artists'][0]['name'] if t.get('artists') else ''}")
-    except Exception as e:
-        print(f"Spotify Error: {e}")
-    return queries
-
-def extract_yt_info(search_term):
-    yt_query = search_term if search_term.startswith("http") else f"ytsearch1:{search_term}"
-    try:
-        return ytdl.extract_info(yt_query, download=False)
-    except Exception as e:
-        print(f"yt-dlp Error: {e}")
-        return None
-
 @bot.tree.command(name="play", description="เปิดเพลงจาก YouTube หรือ Spotify")
 @app_commands.describe(search="ชื่อเพลง, ลิงก์ YouTube หรือ ลิงก์ Spotify")
 async def slash_play(interaction: discord.Interaction, search: str):
@@ -517,6 +521,7 @@ async def slash_play(interaction: discord.Interaction, search: str):
                 timeout=15.0
             )
         except asyncio.TimeoutError:
+            print(f"[TIMEOUT] Extracting {item_query} timed out.")
             continue
 
         if not info:
